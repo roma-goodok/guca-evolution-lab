@@ -1,9 +1,11 @@
 # GUCA Evolution Lab — Short-Term Plan (Weeks 1–3)
 
-## Week 1 — Core GUM + M1 golden tests
-- [ ] #<to-fill> Core: Node/Graph/Rules/Machine (parity with C#)
-- [ ] #<to-fill> CLI: run GUM from YAML genome; print stats; assert vs expected
-- [ ] #<to-fill> Tests: M1 genomes (dummy_bell, fractal7genom)
+## Week 1 — Core GUM + M1 genome tests
+- [ ] #1 Core: Node/Graph/Rules/Machine
+- [ ] #2 CLI: run genome YAML and assert stats
+- [ ] #3 Golden tests: M1 genomes
+- [ ] #4 Project bootstrap: pyproject + pytest
+
 
 ## Week 2 — Fitness v0 + scoring CLI
 - [ ] #<to-fill> Fitness v0 (planarity + facet proxy + BySample & Mesh)
