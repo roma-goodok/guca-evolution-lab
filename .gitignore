@@ -1,0 +1,21 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+.env/
+.conda/
+
+# IDE / editor junk
+.vscode/
+.idea/
+*.swp
+.DS_Store
