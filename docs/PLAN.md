@@ -14,6 +14,7 @@
 
 ---
 
+
 ## Week 2 — Fitness v0 + scoring CLI (in progress)
 - [ ] Fitness v0: planarity filter + facet proxy + BySample & Mesh heuristics  
 - [ ] CLI: score graph/genome with fitness; YAML presets  
