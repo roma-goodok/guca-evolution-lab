@@ -6,8 +6,8 @@ import yaml
 import pytest
 
 EXAMPLES = [
-    Path("examples/genomes/dummy_bell.yaml"),
-    Path("examples/genomes/fractal7genom.yaml"),
+    Path("examples/genomes/dumb_belly_genom.yaml"),
+    Path("examples/genomes/fractal7_genom.yaml"),
 ]
 
 def _run_cli(genome: Path):

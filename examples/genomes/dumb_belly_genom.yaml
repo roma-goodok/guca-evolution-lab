@@ -1,0 +1,75 @@
+machine:
+  start_state: A
+  max_steps: 120
+  transcription: resettable
+  count_compare: range
+  max_vertices: 2000
+rules:
+- condition:
+    current: A
+    prior: A
+    conn_ge: 0
+    conn_le: 0
+    parents_ge: -1
+    parents_le: 0
+  op:
+    kind: GiveBirthConnected
+    operand: B
+- condition:
+    current: B
+    prior: Unknown
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: 2
+  op:
+    kind: GiveBirthConnected
+    operand: B
+- condition:
+    current: B
+    prior: B
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: C
+- condition:
+    current: A
+    prior: A
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: G
+- condition:
+    current: C
+    prior: any
+    conn_ge: 1
+    conn_le: 1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: G
+- condition:
+    current: G
+    prior: G
+    conn_ge: -1
+    conn_le: 5
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: H
+expected:
+  steps: 120
+  nodes: 14
+  edges: 13
+  states_count:
+    C: 2
+    G: 2
+    H: 10
