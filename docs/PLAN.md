@@ -37,4 +37,4 @@
 **Target Deliverables:**  
 - Working GA loop with DEAP.  
 - Population fitness log, reproducibility with seeds.  
-- Config-driven runs (`python -m guca.examples.run_ga`).  
+- Config-driven runs (`python -m guca.examples.run_ga`). 
