@@ -6,7 +6,7 @@ from typing import Optional, Set
 class Node:
     id: int
     state: str
-    prior_state: Optional[str] = None
+    prior_state: Optional[str] = "Unknown"
     parents_count: int = 0
     neighbors: Set[int] = field(default_factory=set)
     marked_new: bool = True
