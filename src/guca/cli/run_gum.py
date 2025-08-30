@@ -15,27 +15,7 @@ from guca.core.graph import GUMGraph, stats_summary
 from guca.core.machine import GraphUnfoldingMachine
 from guca.core.rules import change_table_from_yaml, TranscriptionWay, CountCompare
 
-def _save_placeholder_png(out_path: Path, *, title: str = "", body: str = "") -> float:
-    """
-    Write a simple PNG with a title and a body text. Returns plotting time (seconds).
-    This avoids depending on graph internals; good enough for Week 1.5 screenshots/tests.
-    """
-    import matplotlib.pyplot as plt  # local import to keep CLI import cheap
-    t0 = time.perf_counter()
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig = plt.figure(figsize=(6, 6), dpi=150)
-    ax = fig.add_subplot(111)
-    ax.axis("off")
-    y = 0.9
-    if title:
-        ax.text(0.02, y, title, transform=ax.transAxes, fontsize=12, fontweight="bold", va="top")
-        y -= 0.06
-    if body:
-        ax.text(0.02, y, body, transform=ax.transAxes, fontsize=10, va="top", family="monospace")
-    fig.savefig(out_path, bbox_inches="tight", pad_inches=0.2)
-    plt.close(fig)
-    return time.perf_counter() - t0
-
+from guca.vis.png import save_png
 
 def _save_graph_png(graph, out_path: Path, *, layout_seed: int | None = 42) -> float:
     """
@@ -248,12 +228,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     if getattr(args, "save_png", False):
         saved_png = vis_dir / f"step{getattr(m, 'passed_steps', getattr(args, 'steps', 0))}.png"
         body = json.dumps(summary, indent=2, sort_keys=True)        
-        t_plot = _save_graph_png(graph, saved_png)
+        t_plot = save_png(graph, saved_png)
 
     # Log stats and timings
     logging.info("GUM result graph stats: %s", json.dumps(summary, sort_keys=True))
     t_total = time.perf_counter() - t0_total
     logging.info("Timing: engine=%.3fs, plot=%.3fs, total=%.3fs", t_engine, t_plot, t_total)
+    logging.info("Steps executed: %s", getattr(m, "passed_steps", None))
     if saved_png is not None:
         logging.info("Saved PNG: %s", saved_png.as_posix())
         logging.info("Run log: %s", logfile.as_posix())
