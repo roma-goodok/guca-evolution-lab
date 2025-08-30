@@ -13,7 +13,29 @@
 - Golden tests passing (`pytest -q`).  
 
 ---
+## Week 1.5 — 2D visualization of GUM results (new)
+- [ ] Simple 2D renderer for final graph snapshot (PNG)
+- [ ] CLI flag to save image on demand (no UI)
+- [ ] Output-path conventions for tests vs ad-hoc runs
 
+**Deliverables**
+- `viz/plot2d.py` with a small `save_graph_png(graph, path, **opts)` function
+- Optionally `cli/plot_graph.py` (or `--save-png` in `run_gum`)
+- Minimal styling (node color by state, thin edges), layout via NetworkX:
+  - default: `spring_layout`; fallback to `kamada_kawai_layout` if tiny graphs
+- Works without a display (Agg backend)
+
+**Output conventions**
+- Ad-hoc CLI runs: `runs/vis/{genome_stem}/{timestamp}.png`
+- Tests/golden: `tests/artifacts/{genome_stem}.png` (overwritten deterministically)
+- Batch snapshots (future): `runs/snapshots/{run_id}/step_{k:04d}.png`
+
+**Open choices (we can decide quickly when implementing)**
+- Filename scheme for CLI: `{genome_stem}__steps{N}.png`
+- Max nodes threshold for labels (e.g., label when V ≤ 50)
+- Node size scaling with degree (small range, e.g., 80–200)
+
+---
 
 ## Week 2 — Fitness v0 + scoring CLI (in progress)
 - [ ] Fitness v0: planarity filter + facet proxy + BySample & Mesh heuristics  
