@@ -55,4 +55,9 @@ guca-evolution-lab/
 - Original **GUCA Web Demo**: [github.com/roma-goodok/guca/](https://github.com/roma-goodok/guca/)  
 - Detailed plan in `04_milestone_M2_plan.md` for milestone tasks and deliverables.
 
+4. ### CLI & PNG visualization
+
+See [docs/cli_run_gum.md](docs/cli_run_gum.md) for `--save-png`, output layout, render modes,
+and examples.
+
 
