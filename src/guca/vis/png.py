@@ -222,7 +222,10 @@ def save_png(
     dpi: int = 150,
     node_size: int | None = None,      # auto if None
     font_size: int | None = None,      # auto if None
-    label_nodes_max: int | None = None # auto if None
+    label_nodes_max: int | None = None,# auto if None
+    # NEW: node rendering mode
+    node_render: str = "full",         # "full" | "dots" | "none"
+    dots_node_size: int | None = None, # override dot size in "dots" mode (points^2)
 ) -> float:
     """
     Render the graph to a PNG with:
@@ -231,6 +234,10 @@ def save_png(
       - centered node labels (auto-disabled for very large graphs)
       - edges tinted as a mix of endpoint colors
       - auto-sized canvas and style parameters for large graphs
+      - NEW: node render modes:
+            * "full": colored nodes + optional labels (default)
+            * "dots": very small markers, no labels
+            * "none": draw only edges (no nodes)
 
     Returns plotting time in seconds.
     """
@@ -281,6 +288,11 @@ def save_png(
         label_nodes_max = label_max_auto
     edge_width = ew_auto
 
+    # "dots"/"none" never draw labels
+    node_render = (node_render or "full").lower()
+    if node_render in ("dots", "none"):
+        label_nodes_max = 0
+
     # ---- layout --------------------------------------------------------------
     if n_nodes > 0:
         try:
@@ -292,14 +304,15 @@ def save_png(
 
     # ---- per-node styles -----------------------------------------------------
     nodes_order = list(G.nodes())
-    labels = {nid: _state_label(orig_by_id[nid]) for nid in nodes_order}
     indices = {nid: _state_index(orig_by_id[nid]) for nid in nodes_order}
     node_fill: dict[Any, str] = {}
     text_color: dict[Any, str] = {}
+    labels: dict[Any, str] = {}
     for nid in nodes_order:
         fill, txt = _tone_for_index(indices[nid])
         node_fill[nid] = fill
         text_color[nid] = txt
+        labels[nid] = _state_label(orig_by_id[nid])
 
     # per-edge colors = mix of endpoints
     edge_colors = []
@@ -317,20 +330,35 @@ def save_png(
         # edges first
         nx.draw_networkx_edges(G, pos, ax=ax, edge_color=edge_colors, width=edge_width, alpha=0.9)
 
-        # nodes on top
-        nx.draw_networkx_nodes(
-            G,
-            pos,
-            node_color=[node_fill[nid] for nid in nodes_order],
-            node_size=node_size,
-            linewidths=0.7,
-            edgecolors="#e6e6e6",
-            ax=ax,
-            alpha=0.98,
-        )
+        # nodes (depending on render mode)
+        if node_render == "full":
+            nx.draw_networkx_nodes(
+                G,
+                pos,
+                node_color=[node_fill[nid] for nid in nodes_order],
+                node_size=node_size,
+                linewidths=0.7,
+                edgecolors="#e6e6e6",
+                ax=ax,
+                alpha=0.98,
+            )
+        elif node_render == "dots":
+            # very small markers; no outlines for speed/clarity
+            ds = dots_node_size if dots_node_size is not None else max(6, int(node_size / 35))
+            nx.draw_networkx_nodes(
+                G,
+                pos,
+                node_color=[node_fill[nid] for nid in nodes_order],
+                node_size=ds,
+                linewidths=0.0,
+                edgecolors="none",
+                ax=ax,
+                alpha=0.98,
+            )
+        # node_render == "none": skip node drawing entirely
 
-        # centered labels (only if graph is not too large)
-        if n_nodes <= label_nodes_max:
+        # centered labels (only if graph is not too large and we drew "full")
+        if node_render == "full" and n_nodes <= label_nodes_max:
             for nid, (x, y) in pos.items():
                 ax.text(
                     x,

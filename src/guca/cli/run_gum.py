@@ -169,6 +169,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--save-png", action="store_true", help="Save final PNG of the result (placeholder).")
     ap.add_argument("--run-dir", default="runs", help="Base output directory (default: runs).")
     ap.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
+    ap.add_argument(
+        "--vis-node-render",
+        choices=["full", "dots", "none"],
+        default="full",
+        help="PNG node rendering style: 'full' (default), 'dots' (tiny markers, no labels), or 'none' (edges only).",
+    )
+    ap.add_argument(
+        "--vis-dot-size",
+        type=int,
+        default=None,
+        help="Override node size in 'dots' mode (points^2).",
+    )
+
 
     args = ap.parse_args()
 
@@ -221,14 +234,20 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
     summary = stats_summary(graph)
-    
+
     # Save PNG if requested (placeholder includes summary text)
     t_plot = 0.0
     saved_png = None
     if getattr(args, "save_png", False):
         saved_png = vis_dir / f"step{getattr(m, 'passed_steps', getattr(args, 'steps', 0))}.png"
-        body = json.dumps(summary, indent=2, sort_keys=True)        
-        t_plot = save_png(graph, saved_png)
+        body = json.dumps(summary, indent=2, sort_keys=True)
+        t_plot = save_png(
+            graph,
+            saved_png,
+            node_render=getattr(args, "vis_node_render", "full"),
+            dots_node_size=getattr(args, "vis_dot_size", None),
+        )
+
 
     # Log stats and timings
     logging.info("GUM result graph stats: %s", json.dumps(summary, sort_keys=True))
