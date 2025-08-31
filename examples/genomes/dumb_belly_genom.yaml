@@ -1,9 +1,24 @@
+# If init_graph.nodes exists and is non‑empty → ignore start_state.
+# If init_graph.nodes is missing or empty → create one node with start_state (default "A").
+# If a node in init_graph.nodes omits its state, fallback to start_state for that node.
+
 machine:
   start_state: A
-  max_steps: 120
   transcription: resettable
   count_compare: range
   max_vertices: 2000
+  max_steps: 120
+
+  nearest_search:
+    max_depth: 2          # int >= 1 (default: 2)
+    tie_breaker: stable   # stable | random | by_id | by_creation (default: stable)
+    connect_all: false    # false = choose 1; true = connect to all at minimal distance
+  rng_seed: 42            # optional; if missing, engine will pick a default
+
+init_graph:
+  nodes:
+    - {state: A }
+
 rules:
 - condition:
     current: A

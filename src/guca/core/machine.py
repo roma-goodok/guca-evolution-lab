@@ -17,12 +17,24 @@ class GraphUnfoldingMachine:
                  transcription: TranscriptionWay = TranscriptionWay.resettable,
                  count_compare: CountCompare = CountCompare.range,
                  max_vertices: int = 0,
-                 max_steps: int = 100) -> None:
+                 max_steps: int = 100,
+                 nearest_max_depth: int = 2,                 
+                 nearest_tie_breaker: str = "stable",        
+                 nearest_connect_all: bool = False,          
+                 rng_seed: int | None = None):
+
         self.graph = graph
         self.transcription = transcription
         self.count_compare = count_compare
         self.max_vertices = max_vertices
         self.max_steps = max_steps
+        self.nearest_max_depth = max(1, int(nearest_max_depth))
+        self.nearest_tie_breaker = str(nearest_tie_breaker).lower()
+        self.nearest_connect_all = bool(nearest_connect_all)
+        
+        import random
+        self.rng = random.Random(rng_seed)
+
         self.change_table: ChangeTable = ChangeTable()
         if not any(True for _ in self.graph.nodes()):
             self.graph.add_vertex(state=start_state, parents_count=0, mark_new=True)
@@ -114,11 +126,17 @@ class GraphUnfoldingMachine:
                 if other.id not in node.neighbors:
                     self.graph.add_edge(node.id, other.id)
             return
-
-        if kind == OperationKind.TryToConnectWithNearest and opnd:
-            nb = self.graph.nearest_with_saved_state(node.id, opnd, max_distance=2)
-            if nb is not None and nb not in node.neighbors:
-                self.graph.add_edge(node.id, nb)
+        
+        if kind == OperationKind.TryToConnectWithNearest:
+            u_id = getattr(node, "id", node)
+            self.graph.try_connect_with_nearest(
+                u_id,
+                required_state=opnd,                # << keep old semantics
+                max_depth=self.nearest_max_depth,
+                tie_breaker=self.nearest_tie_breaker,
+                connect_all=self.nearest_connect_all,
+                rng=self.rng,
+            )
             return
 
         if kind == OperationKind.DisconnectFrom and opnd:
