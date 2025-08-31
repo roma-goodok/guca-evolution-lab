@@ -12,7 +12,7 @@ class GraphUnfoldingMachine:
     - Stop on max_steps or two empty iterations.
     """
 
-       def __init__(self, graph: GUMGraph, *,
+    def __init__(self, graph: GUMGraph, *,
                  start_state: str = "A",
                  transcription: TranscriptionWay = TranscriptionWay.resettable,
                  count_compare: CountCompare = CountCompare.range,
@@ -21,7 +21,8 @@ class GraphUnfoldingMachine:
                  nearest_max_depth: int = 2,                 
                  nearest_tie_breaker: str = "stable",        
                  nearest_connect_all: bool = False,          
-                 rng_seed: int | None = None                 
+                 rng_seed: int | None = None):
+
         self.graph = graph
         self.transcription = transcription
         self.count_compare = count_compare
@@ -126,7 +127,7 @@ class GraphUnfoldingMachine:
                     self.graph.add_edge(node.id, other.id)
             return
         
-        if kind == TryToConnectWithNearest or kind == OperationKind.TryToConnectWithNearest:
+        if kind == OperationKind.TryToConnectWithNearest:
             u_id = getattr(node, "id", node)
             self.graph.try_connect_with_nearest(
                 u_id,

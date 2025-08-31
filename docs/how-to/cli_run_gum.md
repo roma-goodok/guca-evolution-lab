@@ -95,6 +95,47 @@ python -m guca.cli.run_gum \
   --run-dir runs
 ```
 
+### Single‑run config with `init_graph` + nearest search
+
+Create a file, e.g. `examples/single_run_nearest.yaml`:
+
+```yaml
+machine:
+  max_steps: 1
+  max_vertices: 100
+  rng_seed: 42
+  nearest_search:
+    max_depth: 2
+    tie_breaker: stable
+    connect_all: false
+
+init_graph:
+  nodes:
+    - { id: 0, state: A }
+    - { id: 1, state: B }
+    - { id: 2, state: B }
+    - { id: 3, state: C }
+    - { id: 4, state: C }
+  edges:
+    - [0, 1]
+    - [0, 2]
+    - [1, 3]
+    - [2, 4]
+
+rules:
+  - condition: { current: A }
+    op: { kind: TryToConnectWithNearest, operand: C }
+```
+
+Run:
+
+```bash
+python -m guca.cli.run_gum --genome examples/single_run_nearest.yaml --save-png
+```
+
+This connects node `0` to the nearest `C` at minimal distance. With `connect_all: false` and `stable`, it deterministically picks the lowest id among the candidates at that depth.
+
+
 ### Notes on visualization
 Auto‑scaling: canvas grows with √N; node size / font size / edge width shrink with √N
 
