@@ -37,7 +37,29 @@
 
 ---
 
-## Week 2 — Fitness v0 + scoring CLI (in progress)
+## Week 2 — Deterministic “connect nearest” & engine config
+
+**Goal.** Remove order-dependent ambiguity from the “connect to nearest” operation and make single-run engine behavior reproducible and configurable.
+
+### Deliverables
+- Global engine options (machine-level defaults):
+  - `nearest_search.max_depth` (default: **2**)
+  - `nearest_search.tie_breaker` ∈ {**stable**, random, by_id, by_creation} (default: **stable**)
+  - `nearest_search.connect_all` (boolean, default: **false**)
+  - `rng_seed` (optional; use machine/global seed if omitted)
+- BFS-based nearest search with **early exit** at minimal distance `d*`.
+- Deterministic enqueueing in **stable** mode (sort neighbors by `id`/creation order).
+- Optional random tie-break using engine RNG (seeded).
+- Unit tests (tie-breakers, multi-connect, max-depth) + one CLI integration example.
+- Docs (YAML spec snippet + ADR link).
+
+### Out of scope (now)
+- Per-rule overrides (we use **global** engine options only).
+- Population-level evolution configs (future milestone).
+
+---
+
+## Week 3 — Fitness v0 + scoring CLI (in progress)
 - [ ] Fitness v0: planarity filter + facet proxy + BySample & Mesh heuristics  
 - [ ] CLI: score graph/genome with fitness; YAML presets  
 - [ ] Tests: fitness smoke + monotonicity sanity  
@@ -50,7 +72,7 @@
 
 ---
 
-## Week 3 — DEAP integration + configs + GA run (planned)
+## Week 4 — DEAP integration + configs + GA run (planned)
 - [ ] Encoding/toolbox/evaluate for GA  
 - [ ] Hydra configs for GA population/steps/etc.  
 - [ ] GA example script with CSV logs  

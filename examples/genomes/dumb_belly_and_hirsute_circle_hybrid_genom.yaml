@@ -1,9 +1,20 @@
 machine:
   start_state: A
-  max_steps: 120
   transcription: resettable
   count_compare: range
   max_vertices: 2000
+  max_steps: 120
+
+  nearest_search:
+    max_depth: 2          # int >= 1 (default: 2)
+    tie_breaker: stable   # stable | random | by_id | by_creation (default: stable)
+    connect_all: false    # false = choose 1; true = connect to all at minimal distance
+  rng_seed: 42            # optional; if missing, engine will pick a default
+
+init_graph:
+  nodes:
+    - {state: A }
+    
 rules:
 - condition:
     current: M

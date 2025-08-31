@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from typing import Any, Dict
+from typing import Optional, Any, Dict
 import yaml
 
 from guca.core.graph import GUMGraph, stats_summary
@@ -160,6 +160,58 @@ def _load_yaml(p: Path) -> Dict[str, Any]:
     with p.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f)
 
+def _seed_graph_from_cfg(graph, machine_cfg, init):
+    """
+    Create initial nodes/edges from YAML.
+    If init['nodes'] missing/empty => create one node with start_state (default 'A').
+    If a node omits 'state' => fallback to start_state.
+    """
+    add_node = getattr(graph, "add_node", None) or getattr(graph, "add_vertex", None)
+    add_edge = getattr(graph, "add_edge", None) or getattr(graph, "connect", None)
+    if add_node is None or add_edge is None:
+        logging.warning("init_graph: graph lacks add_node/add_edge; skipping init.")
+        return
+
+    start_state = str(machine_cfg.get("start_state", "A"))
+    nodes = (init.get("nodes") if init else None) or []
+    edges = (init.get("edges") if init else None) or []
+
+    id_map = {}
+    next_id = 0
+
+    if not nodes:
+        # No nodes provided → single seed node with start_state
+        nid = add_node(start_state)
+        if nid is None:
+            nid = next_id; next_id += 1
+        id_map[0] = nid
+    else:
+        for item in nodes:
+            if isinstance(item, dict):
+                state = item.get("state", start_state)
+                req_id = item.get("id", None)
+            else:
+                state = str(item) if item is not None else start_state
+                req_id = None
+            new_id = add_node(state)
+            if new_id is None:
+                new_id = next_id; next_id += 1
+            if req_id is None:
+                req_id = new_id
+            id_map[req_id] = new_id
+
+    for uv in edges:
+        try:
+            u, v = uv
+        except Exception:
+            logging.warning("init_graph: bad edge entry %r; skipping", uv)
+            continue
+        if u not in id_map or v not in id_map:
+            logging.warning("init_graph: edge (%r,%r) refers to unknown node(s); skipping", u, v)
+            continue
+        add_edge(id_map[u], id_map[v])
+
+
 def main(argv: Optional[list[str]] = None) -> int:
 
     ap = argparse.ArgumentParser(description="Run a GUM genome and print stats (JSON).")
@@ -186,19 +238,32 @@ def main(argv: Optional[list[str]] = None) -> int:
     args = ap.parse_args()
 
     cfg = _load_yaml(args.genome)
-    machine_cfg = cfg.get("machine", {})
-    rules_yaml = cfg.get("rules", [])
+    machine_cfg = cfg.get("machine", {}) or {}
+    rules_yaml = cfg.get("rules", []) or []
+    init_cfg = cfg.get("init_graph", {}) or {}
 
     graph = GUMGraph()
+    _seed_graph_from_cfg(graph, machine_cfg, init_cfg)
+
+    nearest_cfg = machine_cfg.get("nearest_search", {}) or {}
+    rng_seed = machine_cfg.get("rng_seed", None)
+
     m = GraphUnfoldingMachine(
         graph,
-        start_state=str(machine_cfg.get("start_state", "A")),
+        start_state=str(machine_cfg.get("start_state", "A")),  # harmless if init_graph provided
         transcription=TranscriptionWay(machine_cfg.get("transcription", "resettable")),
         count_compare=CountCompare(machine_cfg.get("count_compare", "range")),
         max_vertices=int(machine_cfg.get("max_vertices", 0)),
         max_steps=(args.steps if args.steps is not None else int(machine_cfg.get("max_steps", 100))),
+        nearest_max_depth=int(nearest_cfg.get("max_depth", 2)),
+        nearest_tie_breaker=str(nearest_cfg.get("tie_breaker", "stable")),
+        nearest_connect_all=bool(nearest_cfg.get("connect_all", False)),
+        rng_seed=rng_seed,
     )
+
     m.change_table = change_table_from_yaml(rules_yaml)
+
+
 
     # --- logging setup + output layout ---
     genome_name = _derive_genome_name(args.genome)
