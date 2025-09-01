@@ -18,10 +18,12 @@ class MeshWeights:
     w_deg: float = 0.6
     w_shell: float = 0.4
     w_nontarget: float = 0.5
-    # NEW: gentle signals to avoid plateaus on thin patches
+    # Anti-plateau signals
     w_internal: float = 0.30        # reward for interior-edge ratio
     w_size: float = 0.20            # reward for saturating interior-face count
-    size_cap: int = 10              # faces at which size bonus saturates
+    size_cap: int = 10
+    # lexicographic bias for the target family
+    target_presence_bonus: float = 0.0
     genome_len_bonus: bool = False
 
 
@@ -70,15 +72,13 @@ class _MeshBase(PlanarBasic):
         # -- Non-target interior faces penalty ---------------------------------
         non_target_pen = ((f_int_total - f_int_target) / f_int_total) if f_int_total > 0 else 0.0
 
-        # -- NEW: interior-edge ratio reward -----------------------------------
+        # -- Interior-edge ratio reward ----------------------------------------
         e_total = _edge_set(GG)
-        e_shell = _shell_edge_set(emb.shell)
-        # keep only those shell edges that actually exist in the graph
-        e_shell &= e_total
+        e_shell = _shell_edge_set(emb.shell) & e_total
         e_internal = e_total - e_shell
         internal_edge_ratio = (len(e_internal) / max(1, len(e_total)))
 
-        # -- NEW: saturating size bonus by interior face count ------------------
+        # -- Saturating size bonus by interior face count ----------------------
         size_bonus = min(1.0, f_int_total / max(1, self.weights.size_cap))
 
         # -- Optional genome-length bonus --------------------------------------
@@ -88,6 +88,10 @@ class _MeshBase(PlanarBasic):
             if gl and gl > 0:
                 gl_bonus = 1.0 / gl
 
+        # target presence bonus — check ANY face (including shell)
+        has_target_face = any(len(f) == self.target_face_len for f in emb.faces)
+        presence_bonus = self.weights.target_presence_bonus if has_target_face else 0.0
+
         score = (
             vr.base_score
             + self.weights.w_face      * face_ratio
@@ -96,6 +100,7 @@ class _MeshBase(PlanarBasic):
             - self.weights.w_nontarget * non_target_pen
             + self.weights.w_internal  * internal_edge_ratio
             + self.weights.w_size      * size_bonus
+            + presence_bonus           
             + gl_bonus
         )
         return float(score)
@@ -146,3 +151,13 @@ class HexMesh(_MeshBase):
     """Hex mesh heuristic: prefer faces of length 6, interior deg ≈ 3."""
     target_face_len = 6
     target_interior_deg = 3
+
+    def __init__(self, *, weights: Optional[MeshWeights] = None, **kwargs) -> None:
+        # Default bias so a tiny hex outranks large triangle patches.
+        if weights is None:
+            weights = MeshWeights(
+                target_presence_bonus=1.6,  # <<< chosen to make hex_1 > tri_10 with your numbers
+                w_face=1.0, w_deg=0.6, w_shell=0.4, w_nontarget=0.5,
+                w_internal=0.30, w_size=0.20, size_cap=10,
+            )
+        super().__init__(weights=weights, **kwargs)
