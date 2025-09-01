@@ -22,3 +22,4 @@ venv/
 
 # run artefacts
 runs/
+docs/xx_legacy/*.json
