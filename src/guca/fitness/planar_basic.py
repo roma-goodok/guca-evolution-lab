@@ -4,50 +4,41 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Hashable
 from collections import Counter
+import math
 
 import networkx as nx
 from networkx.algorithms.planarity import check_planarity
-
 
 Hash = Hashable
 
 
 @dataclass
 class EmbeddingInfo:
-    """Computed geometric/topological features for a planar (or near-planar) graph."""
-    faces: List[List[Hash]]                 # all faces as node-cycles (outer face included)
-    shell: List[Hash]                       # nodes along the outer face (largest cycle)
-    shell_nodes: Set[Hash]                  # set(shell)
-    face_lengths: Counter                   # histogram of |face|
-    interior_nodes: Set[Hash]               # V \ shell_nodes
-    interior_degree_hist: Counter           # histogram of deg(v) over interior_nodes
+    faces: List[List[Hash]]                 # unique faces as node-cycles (shell included)
+    shell: List[Hash]                       # nodes along the outer face
+    shell_nodes: Set[Hash]
+    face_lengths: Counter
+    interior_nodes: Set[Hash]
+    interior_degree_hist: Counter
 
 
 @dataclass
 class ViabilityResult:
-    """Outcome of the fast pre-fitness filter."""
     viable: bool
-    base_score: float                       # usually 1.0 when viable; small penalty otherwise
-    reason: str                             # machine-readable reason for non-viability (or "ok")
+    base_score: float
+    reason: str
 
 
 class PlanarBasic:
     """
     Common scaffolding for GUCA graph fitness functions.
 
-    Responsibilities:
-      1) Select largest connected component (to avoid tiny fragments dominating).
-      2) Apply fast viability filters (size, divergence, planarity).
-      3) Compute a planar embedding (if possible) and extract faces + outer shell.
-      4) Provide helpers (face-length hist, interior degree hist) for downstream scoring.
-
-    Notes
-    -----
-    * When a planar embedding isn't available (rare if graph is planar), we fall back to a
-      cycle-basis proxy for faces. This proxy is good enough for tiny lattice fixtures and
-      v0 scoring, but we document it as an approximation.
-    * Divergence is passed in via `meta={'steps': int, 'max_steps': int, 'diverged': bool}`.
-      If unavailable, only size and planarity checks are applied.
+    Strategy:
+      1) Geometry-first: if nodes carry `pos`, compute faces by clockwise traversal in 2D.
+         This aligns faces with the intended lattice (triangle/hex).
+      2) Else fall back to NetworkX PlanarEmbedding traversal.
+      3) Canonicalize cycles (ignore rotation & direction) to dedup.
+      4) Choose shell (outer) by maximal polygon area, then classify interior.
     """
 
     def __init__(
@@ -72,12 +63,7 @@ class PlanarBasic:
     # --------------------
     # Public API
     # --------------------
-    def viability_filter(
-        self,
-        G: nx.Graph,
-        meta: Optional[Dict] = None,
-    ) -> ViabilityResult:
-        """Apply cheap, order-of-magnitude filters before expensive scoring."""
+    def viability_filter(self, G: nx.Graph, meta: Optional[Dict] = None) -> ViabilityResult:
         if G.number_of_nodes() <= 1:
             return ViabilityResult(False, self.one_node_penalty, "one_node")
 
@@ -85,14 +71,12 @@ class PlanarBasic:
             return ViabilityResult(False, self.oversize_penalty, "oversize")
 
         if meta:
-            # Prefer explicit diverged marker; otherwise infer from steps >= max_steps
             diverged = bool(meta.get("diverged", False))
             steps = meta.get("steps", None)
             max_steps = meta.get("max_steps", None)
             if diverged or (isinstance(steps, int) and isinstance(max_steps, int) and steps >= max_steps):
                 return ViabilityResult(False, self.diverged_penalty, "diverged")
 
-        # Planarity check; we don't compute embedding here yet to keep this step cheap.
         planar, _ = check_planarity(G, counterexample=False)
         if self.require_planarity and not planar:
             return ViabilityResult(False, self.nonplanar_penalty, "nonplanar")
@@ -100,43 +84,49 @@ class PlanarBasic:
         return ViabilityResult(True, 1.0, "ok")
 
     def prepare_graph(self, G: nx.Graph) -> nx.Graph:
-        """Optionally reduce to the largest connected component and copy."""
-        if not self.take_lcc:
+        if not self.take_lcc or G.number_of_nodes() == 0 or nx.is_connected(G):
             return G.copy()
-        if G.number_of_nodes() == 0:
-            return G.copy()
-        if nx.is_connected(G):
-            return G.copy()
-        # Choose the largest connected component
         comps = sorted(nx.connected_components(G), key=len, reverse=True)
         return G.subgraph(comps[0]).copy()
 
     def compute_embedding_info(self, G: nx.Graph) -> EmbeddingInfo:
-        """
-        Compute faces, shell (outer face), and interior degree histogram.
-        """
-        planar, emb = check_planarity(G, counterexample=False)
-
-        if planar:
-            faces = self._faces_from_embedding(G, emb)
+        # 1) Gather positions if available (prefer real positions to keep lattice faces correct)
+        pos_attr = nx.get_node_attributes(G, "pos")
+        pos: Optional[Dict[Hash, Tuple[float, float]]]
+        if pos_attr:
+            # normalize to tuples of floats
+            pos = {n: (float(p[0]), float(p[1])) for n, p in pos_attr.items()}
         else:
-            faces = self._faces_from_cycles_proxy(G)
+            pos = None
 
-        # --- Pick the shell (outer) face by maximal polygon area if possible ---
-        shell = None
-        try:
-            # Try to use a planar drawing to measure face areas
-            pos = nx.planar_layout(G)
-            if faces:
-                areas = [abs(self._polygon_area(f, pos)) for f in faces]
-                shell = faces[max(range(len(faces)), key=lambda i: areas[i])]
-        except Exception:
-            shell = None
+        # 2) Extract faces (geometry-first)
+        if pos:
+            faces_raw = self._faces_from_pos(G, pos)
+        else:
+            planar, emb = check_planarity(G, counterexample=False)
+            faces_raw = self._faces_from_embedding(G, emb) if planar else self._faces_from_cycles_proxy(G)
 
-        # Fallback: if anything failed, keep the previous “longest cycle” heuristic
-        if shell is None:
-            shell = max(faces, key=len) if faces else list(G.nodes())
+        # 3) Canonicalize & deduplicate cycles (ignore rotation & direction)
+        canon_faces: Dict[Tuple[Hash, ...], List[Hash]] = {}
+        for cyc in faces_raw:
+            if len(cyc) < 3:
+                continue
+            key = self._canon_cycle_key(cyc)
+            canon_faces[key] = list(cyc)  # last writer wins; they are equivalent
 
+        faces = list(canon_faces.values())
+
+        # 4) Choose shell by maximal polygon area
+        if not faces:
+            shell = list(G.nodes())
+        else:
+            if not pos:
+                # compute a quick layout to measure areas when pos is missing
+                pos = nx.planar_layout(G)
+            areas = [abs(self._polygon_area(f, pos)) for f in faces]
+            shell = faces[max(range(len(faces)), key=lambda i: areas[i])]
+
+        # 5) Compute counts/histograms
         shell_nodes = set(shell)
         face_lengths = Counter(len(f) for f in faces)
 
@@ -152,45 +142,13 @@ class PlanarBasic:
             interior_degree_hist=interior_degree_hist,
         )
 
-    @staticmethod
-    def _polygon_area(face: Sequence[Hash], pos: Dict[Hash, Sequence[float]]) -> float:
-        """Signed polygon area for a face using node positions (shoelace formula)."""
-        if not face:
-            return 0.0
-        area = 0.0
-        for i in range(len(face)):
-            x1, y1 = pos[face[i]]
-            x2, y2 = pos[face[(i + 1) % len(face)]]
-            area += x1 * y2 - x2 * y1
-        return 0.5 * area
-
-
     # --------------------
-    # Helpers
+    # Helpers — face extraction
     # --------------------
     @staticmethod
     def _faces_from_embedding(G: nx.Graph, emb) -> List[List[Hash]]:
-        """
-        Enumerate faces from a NetworkX PlanarEmbedding.
-
-        Implementation detail:
-          * Prefer emb.faces() when available (NetworkX >= 2.8+),
-            otherwise traverse each *directed* edge's left face once
-            using emb.traverse_face(u, v), marking visited directed edges.
-          * We intentionally DO NOT deduplicate faces that share the same node-set
-            with reverse orientation; keeping both is necessary to distinguish the
-            outer vs inner face on simple cycles.
-        """
+        """Enumerate faces from a NetworkX PlanarEmbedding via left-face traversal."""
         faces: List[List[Hash]] = []
-
-        # Some NetworkX versions expose faces() directly.
-        if hasattr(emb, "faces") and callable(getattr(emb, "faces")):
-            # emb.faces() may yield tuples or lists; normalize to list[List[Hash]]
-            for f in emb.faces():
-                faces.append(list(f))
-            return faces
-
-        # Robust fallback: traverse each directed edge exactly once.
         visited: Set[Tuple[Hash, Hash]] = set()
         for u in emb:
             for v in emb[u]:
@@ -201,35 +159,106 @@ class PlanarBasic:
                 except Exception:
                     continue
                 if len(cycle) >= 2:
-                    # mark all directed edges along this face (orientation matters)
                     for i in range(len(cycle)):
                         a = cycle[i]
                         b = cycle[(i + 1) % len(cycle)]
                         visited.add((a, b))
+                    # normalize: We want node cycles without repeating the first at the end
+                    if cycle and cycle[0] == cycle[-1]:
+                        cycle = cycle[:-1]
                     faces.append(cycle)
-
         return faces
-
 
     @staticmethod
     def _faces_from_cycles_proxy(G: nx.Graph) -> List[List[Hash]]:
-        """
-        Proxy for faces when no embedding is available: use a simple cycle basis.
-
-        This is an approximation (not all fundamental cycles correspond to faces),
-        but is sufficient for tiny lattice fixtures in v0.
-        """
+        """Fallback: use a simple cycle basis as a proxy (approximation)."""
         try:
             basis = nx.cycle_basis(G)
         except Exception:
             basis = []
-        # Normalize to lists, ensure simple cycles
-        faces = [list(cyc) for cyc in basis if len(cyc) >= 3]
-        return faces
+        return [list(cyc) for cyc in basis if len(cyc) >= 3]
 
     @staticmethod
-    def degree_histogram(G: nx.Graph, nodes: Optional[Iterable[Hash]] = None) -> Counter:
-        """Histogram of degrees over the provided node subset (or all nodes if None)."""
-        if nodes is None:
-            nodes = G.nodes()
-        return Counter(G.degree(n) for n in nodes)
+    def _faces_from_pos(G: nx.Graph, pos: Dict[Hash, Tuple[float, float]]) -> List[List[Hash]]:
+        """
+        Geometry-driven face walking (clockwise DCEL) using node coordinates `pos`.
+
+        For each directed half-edge (u->v), we take the face on the right by picking,
+        at vertex v, the neighbor w that is immediately clockwise from u around v.
+        """
+        # Precompute clockwise neighbor orderings
+        cw_neighbors: Dict[Hash, List[Hash]] = {}
+        for v in G.nodes():
+            x0, y0 = pos[v]
+            neigh = list(G.neighbors(v))
+            neigh.sort(
+                key=lambda u: math.atan2(pos[u][1] - y0, pos[u][0] - x0),
+                reverse=True,  # descending angle = clockwise
+            )
+            cw_neighbors[v] = neigh
+
+        faces: List[List[Hash]] = []
+        visited_half_edges: Set[Tuple[Hash, Hash]] = set()
+
+        for u in G.nodes():
+            for v in cw_neighbors[u]:
+                if (u, v) in visited_half_edges:
+                    continue
+
+                # traverse one face to the right of half-edge (u->v)
+                face: List[Hash] = []
+                a, b = u, v
+                while True:
+                    visited_half_edges.add((a, b))
+                    face.append(a)
+                    nb = cw_neighbors[b]
+                    # find index of 'a' in cw order around 'b'
+                    try:
+                        idx = nb.index(a)
+                    except ValueError:
+                        break  # disconnected / inconsistent
+                    # clockwise next (right turn)
+                    c = nb[(idx - 1) % len(nb)]
+                    a, b = b, c
+                    if (a, b) == (u, v):
+                        break
+
+                if len(face) >= 3:
+                    faces.append(face)
+
+        return faces
+
+    # --------------------
+    # Helpers — geometry & canonicalization
+    # --------------------
+    @staticmethod
+    def _polygon_area(face: Sequence[Hash], pos: Dict[Hash, Sequence[float]]) -> float:
+        area = 0.0
+        for i in range(len(face)):
+            x1, y1 = pos[face[i]]
+            x2, y2 = pos[face[(i + 1) % len(face)]]
+            area += x1 * y2 - x2 * y1
+        return 0.5 * area
+
+    @staticmethod
+    def _canon_cycle_key(cyc: Sequence[Hash]) -> Tuple[Hash, ...]:
+        """
+        Canonical key for a cycle ignoring rotation and direction.
+        """
+        s = list(cyc)
+        if len(s) > 1 and s[0] == s[-1]:
+            s = s[:-1]
+
+        # best rotation forward / backward by lexicographic node id (string)
+        def best_rotation(seq: List[Hash]) -> Tuple[Hash, ...]:
+            n = len(seq)
+            # find all indices with minimal label (by string) and pick the lexicographically smallest rotation
+            labels = [str(x) for x in seq]
+            min_label = min(labels)
+            idxs = [i for i, lab in enumerate(labels) if lab == min_label]
+            candidates = [tuple(seq[i:] + seq[:i]) for i in idxs]
+            return min(candidates)
+
+        fwd = best_rotation(s)
+        bwd = best_rotation(list(reversed(s)))
+        return min(fwd, bwd)
