@@ -62,9 +62,9 @@
 ---
 
 ## Week 3 — Fitness v0 + scoring CLI (in progress)
-- [ ] Fitness v0: planarity filter + facet proxy + BySample & Mesh heuristics  
-- [ ] CLI: score graph/genome with fitness; YAML presets  
-- [ ] Tests: fitness smoke + monotonicity sanity  
+- [x] Fitness v0: planarity filter + facet proxy + BySample & Mesh heuristics  
+- [x] CLI: score graph/genome with fitness; YAML presets  
+- [x] Tests: fitness smoke + monotonicity sanity  
 - [ ] Hydra configs for machine/fitness settings  
 
 **Target Deliverables:**  
