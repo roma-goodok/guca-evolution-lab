@@ -1,8 +1,9 @@
 # src/guca/fitness/meshes.py
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple, Hashable
+from collections import Counter
 
 import networkx as nx
 
@@ -22,8 +23,11 @@ class MeshWeights:
     w_internal: float = 0.30        # reward for interior-edge ratio
     w_size: float = 0.20            # reward for saturating interior-face count
     size_cap: int = 10
-    # lexicographic bias for the target family
+    # Lexicographic bias for the target family (presence of at least one target face anywhere)
     target_presence_bonus: float = 0.0
+    # forbid/penalize particular interior face sizes (length -> penalty weight)
+    #      Example for HexMesh: {3: 0.8} to penalize triangles; {4: 0.2} to also discourage quads.
+    w_forbidden_faces: Dict[int, float] = field(default_factory=dict)
     genome_len_bonus: bool = False
 
 
@@ -88,9 +92,17 @@ class _MeshBase(PlanarBasic):
             if gl and gl > 0:
                 gl_bonus = 1.0 / gl
 
-        # target presence bonus — check ANY face (including shell)
+        # Target presence bonus — check ANY face (including shell)
         has_target_face = any(len(f) == self.target_face_len for f in emb.faces)
         presence_bonus = self.weights.target_presence_bonus if has_target_face else 0.0
+
+        # Forbidden face penalties over interior faces only
+        forbidden_pen = 0.0
+        if f_int_total > 0 and self.weights.w_forbidden_faces:
+            hist = Counter(len(f) for f in faces_wo_shell)
+            for k, w in self.weights.w_forbidden_faces.items():
+                if w > 0:
+                    forbidden_pen += w * (hist.get(k, 0) / f_int_total)
 
         score = (
             vr.base_score
@@ -98,9 +110,10 @@ class _MeshBase(PlanarBasic):
             + self.weights.w_deg       * deg_reward
             - self.weights.w_shell     * shell_pen
             - self.weights.w_nontarget * non_target_pen
+            - forbidden_pen                                   # <— NEW
             + self.weights.w_internal  * internal_edge_ratio
             + self.weights.w_size      * size_bonus
-            + presence_bonus           
+            + presence_bonus
             + gl_bonus
         )
         return float(score)
@@ -153,10 +166,11 @@ class HexMesh(_MeshBase):
     target_interior_deg = 3
 
     def __init__(self, *, weights: Optional[MeshWeights] = None, **kwargs) -> None:
-        # Default bias so a tiny hex outranks large triangle patches.
+        # Keep the upward bias (presence bonus), but no forbidden faces by default.
         if weights is None:
             weights = MeshWeights(
-                target_presence_bonus=1.6,  # <<< chosen to make hex_1 > tri_10 with your numbers
+                target_presence_bonus=1.6,   # ensures hex_1 > large tri patches
+                # You can add: w_forbidden_faces={3: 0.8} in evolution configs for stronger bias
                 w_face=1.0, w_deg=0.6, w_shell=0.4, w_nontarget=0.5,
                 w_internal=0.30, w_size=0.20, size_cap=10,
             )
