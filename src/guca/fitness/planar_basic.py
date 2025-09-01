@@ -113,31 +113,29 @@ class PlanarBasic:
 
     def compute_embedding_info(self, G: nx.Graph) -> EmbeddingInfo:
         """
-        Compute faces, shell, and interior degree histogram for a (near) planar graph.
-
-        Returns
-        -------
-        EmbeddingInfo
-            faces: list of node-cycles (outer face included)
-            shell: nodes along the outer face (largest cycle)
-            face_lengths: Counter over cycle lengths
-            interior_nodes: V \ shell
-            interior_degree_hist: Counter over degrees of interior nodes
+        Compute faces, shell (outer face), and interior degree histogram.
         """
         planar, emb = check_planarity(G, counterexample=False)
 
         if planar:
             faces = self._faces_from_embedding(G, emb)
         else:
-            # Fallback: use cycle basis as a proxy.
             faces = self._faces_from_cycles_proxy(G)
 
-        # Identify outer face ("shell") as the longest cycle.
-        if faces:
-            shell = max(faces, key=len)
-        else:
-            # Degenerate (no cycles) – treat all vertices as shell
-            shell = list(G.nodes())
+        # --- Pick the shell (outer) face by maximal polygon area if possible ---
+        shell = None
+        try:
+            # Try to use a planar drawing to measure face areas
+            pos = nx.planar_layout(G)
+            if faces:
+                areas = [abs(self._polygon_area(f, pos)) for f in faces]
+                shell = faces[max(range(len(faces)), key=lambda i: areas[i])]
+        except Exception:
+            shell = None
+
+        # Fallback: if anything failed, keep the previous “longest cycle” heuristic
+        if shell is None:
+            shell = max(faces, key=len) if faces else list(G.nodes())
 
         shell_nodes = set(shell)
         face_lengths = Counter(len(f) for f in faces)
@@ -153,6 +151,19 @@ class PlanarBasic:
             interior_nodes=interior_nodes,
             interior_degree_hist=interior_degree_hist,
         )
+
+    @staticmethod
+    def _polygon_area(face: Sequence[Hash], pos: Dict[Hash, Sequence[float]]) -> float:
+        """Signed polygon area for a face using node positions (shoelace formula)."""
+        if not face:
+            return 0.0
+        area = 0.0
+        for i in range(len(face)):
+            x1, y1 = pos[face[i]]
+            x2, y2 = pos[face[(i + 1) % len(face)]]
+            area += x1 * y2 - x2 * y1
+        return 0.5 * area
+
 
     # --------------------
     # Helpers
