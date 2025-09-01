@@ -23,3 +23,9 @@ venv/
 # run artefacts
 runs/
 docs/xx_legacy/*.json
+# Run artifacts, previews, debug outputs
+/artifacts/
+
+# Avoid stray PNGs in repo root
+/*.png
+

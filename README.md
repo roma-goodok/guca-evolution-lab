@@ -1,63 +1,138 @@
 # GUCA Evolution Lab
 
-This repository contains the **Graph Evolution Lab** for exploring evolutionary algorithms applied to **Graph Unfolding Cellular Automata (GUCA)**.
+Evolutionary search for **Graph Unfolding Cellular Automata (GUCA)** rules (“change tables”) with compact, interpretable fitness, a simple CLI to run genomes, and a growing base for GA‑driven evolution.
 
-## Project Overview
+> Current milestone: **M2 — Evolution Lab**. See plans under `docs/01_plans/`.
 
-1. **Objective**  
-   - Implement an evolutionary framework to evolve “change tables” (rules) that drive graph unfolding.
-   - Reproduce and extend old experiments from the original C# codebase, now in modern Python with parallelization support.
+---
 
-2. **Main Components**  
-   - **Python GUM Machine** (Graph Unfolding Machine):  
-     - Core classes for graph nodes, edges, and unfolding logic.
-   - **Genetic Algorithm**:
-     - Based on **DEAP** to handle variable-length chromosomes representing GUCA rules.
-   - **Experiment Management**:
-     - CLI-based approach (optionally using **Hydra-Core**) for easy parameter configuration.
-     - Optional integration with **ClearML** or **Weights & Biases** for tracking experiment results.
-   - **Analytics**:
-     - Jupyter notebooks for visualization and analysis of evolved graphs.
+## Overview
 
-3. **Repository Structure**
+- **GUM Machine (Graph Unfolding Machine)** — executes a genome (rules) to grow a graph from an initial seed.
+- **Fitness & evaluation** — reference fitness functions to score produced graphs (triangle/quad/hex mesh heuristics, and a distribution‑based “BySample”).
+- **Experimentation** — a CLI to run genomes and inspect results; evolution configs and GA operators are planned next.
 
+For details of the machine CLI and genome format, see the links in the **Documentation** section below.
+
+---
+
+## Install
+
+Python **3.10+** recommended.
+
+```bash
+pip install -r requirements.txt
+# (dev) tests & previews
+pip install -r requirements-dev.txt
+```
+
+---
+
+## Quick Start
+
+### 1) Run a genome with the GUM machine
+
+Use the CLI to execute a genome YAML, print a short JSON summary, and (optionally) save a PNG visualization.
+
+```bash
+# Show help
+python -m guca.cli.run_gum --help
+
+# Minimal run (no PNG)
+python -m guca.cli.run_gum \
+  --genome examples/genomes/dumb_belly_genom.yaml \
+  --steps 120
+
+# Save a PNG next to run logs
+python -m guca.cli.run_gum \
+  --genome examples/genomes/dumb_belly_genom.yaml \
+  --steps 120 \
+  --save-png
+```
+
+**Default output layout**
+
+```
+runs/
+  <genome_name>/
+    vis/   step<EXEC_STEPS>.png
+    logs/  run-YYYYMMDD-HHMMSS.log
+```
+
+> `<EXEC_STEPS>` is the actual number of steps the machine executed; it can be less than `--steps` if the run stops earlier.
+
+### 2) Genome YAML at a glance
+
+A single‑run genome YAML has three top‑level sections:
+
+```yaml
+machine:
+  max_steps: 120
+  max_vertices: 2000
+  start_state: A
+  rng_seed: 42
+  nearest_search:
+    max_depth: 2
+    tie_breaker: stable
+    connect_all: false
+
+init_graph:
+  nodes:
+    - { id: 0, state: A }
+    - { id: 1, state: B }
+  edges:
+    - [0, 1]
+
+rules:
+  - condition: { current: A }
+    op: { kind: TryToConnectWithNearest, operand: B }
+```
+
+- If `init_graph.nodes` is missing or empty, the engine starts from a single node with `machine.start_state` (default "A").
+- `nearest_search` controls BFS depth and deterministic tie‑breaking for nearest‑neighbor connect operations.
+
+---
+
+## Documentation
+
+- **How to run the GUM machine (CLI):** `docs/how-to/cli_run_gum.md`
+- **Genome YAML spec (single‑run):** `docs/reference/genome_yaml_spec.md`
+- **Fitness functions (reference):** `docs/reference/fitness.md`
+- **Plans & vision:**  
+  - `docs/01_plans/PLAN.md`  
+  - `docs/01_plans/vision_and_high_level_plan.md`  
+  - Milestone M2 plan: `docs/01_plans/milestones/m2_evolution_lab/04_milestone_M2_plan.md`
+- **Architecture decisions (ADRs):** `docs/02_adr/`
+
+---
+
+## Repository Layout
+
+```
 guca-evolution-lab/
-├─ src/
-├─ tests/
-├─ docs/
-├─ examples/
-├─ configs/
+├─ src/                  # GUCA core, fitness, CLI
+├─ tests/                # pytest suite
+├─ tools/                # development scripts
+├─ docs/                 # plans, ADRs, how‑tos, references
+│  ├─ 01_plans/
+│  ├─ 02_adr/
+│  ├─ how-to/
+│  └─ reference/
+├─ artifacts/            # generated previews (git‑ignored)
+├─ configs/              # (planned) GA/experiment configs
 └─ README.md
+```
 
-- **src/**: Core Python code for the Graph Unfolding Machine (GUM), genetic algorithm setup, and experiment runners.  
-- **tests/**: Unit tests (and possibly integration tests) to ensure each module works correctly.  
-- **docs/**: Project documentation, user guides, and design notes.  
-- **examples/**: Sample scripts or notebooks demonstrating how to run GUCA experiments or visualize results.  
-- **configs/**: YAML or JSON configuration files defining experiment parameters (population size, mutation rates, etc.).  
-- **README.md**: The top-level project overview (this file).
+---
 
-4. **How to Get Started**  
-- Clone the repository:  
-  ```
-  git clone git@github.com:YOUR_USERNAME/guca-evolution-lab.git
-  cd guca-evolution-lab
-  ```
-- Install required packages (Python 3.10+ recommended). For example:
-  ```
-  pip install -r requirements.txt
-  ```
-- Run a sample experiment:
-  ```
-  python src/run_experiment.py +experiment=default
-  ```
+## Next Steps
 
-5. **References**  
-- Original **GUCA Web Demo**: [github.com/roma-goodok/guca/](https://github.com/roma-goodok/guca/)  
-- Detailed plan in `04_milestone_M2_plan.md` for milestone tasks and deliverables.
+- **GA integration (DEAP):** variable‑length chromosome (64‑bit gene), crossover and mutation operators, structural edits (insert/duplicate/delete), active/passive regimes.
+- **Experiment runner & configs:** Hydra‑based experiments, reproducibility tests, logging.
 
-4. ### CLI & PNG visualization
+---
 
-See [docs/cli_run_gum.md](docs/cli_run_gum.md) for `--save-png`, output layout, render modes,
-and examples.
+## Contributing
 
-
+- Create a feature branch (`feat/<topic>`), add tests, and open a PR.
+- Generated images should live under `artifacts/` (git‑ignored).
