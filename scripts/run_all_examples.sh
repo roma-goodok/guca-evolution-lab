@@ -49,3 +49,16 @@ python -m guca.cli.run_gum \
   --steps 101 \
   --save-png \
   --vis-node-render none
+
+
+# python -m guca.cli.run_gum \
+#   --genome examples/genomes/HexMesh_55.0_short_43gens.yaml \
+#   --steps 200 \
+#   --save-png \
+#   --vis-node-render none
+
+# python -m guca.cli.run_gum \
+#   --genome examples/genomes/HexMesh_64.13_short.yaml \
+#   --steps 200 \
+#   --save-png \
+#   --vis-node-render none

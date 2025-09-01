@@ -1,0 +1,2 @@
+python convert_legacy_xml_genes.py ../docs/xx_legacy/HexMesh_55.0_short_43gens.xml -o ../examples/genomes/HexMesh_55.0_short_43gens.yaml
+python convert_legacy_xml_genes.py ../docs/xx_legacy/HexMesh_64.13_short.xml -o ../examples/genomes/HexMesh_64.13_short.yaml

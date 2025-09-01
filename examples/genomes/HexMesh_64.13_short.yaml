@@ -1,0 +1,414 @@
+machine:
+  start_state: A
+  transcription: resettable
+  count_compare: range
+  max_vertices: 512
+  max_steps: 120
+  nearest_search:
+    max_depth: 5
+    tie_breaker: random
+    connect_all: false
+init_graph:
+  nodes:
+  - state: A
+rules:
+- condition:
+    current: A
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: Q
+- condition:
+    current: A
+    prior: A
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: K
+- condition:
+    current: D
+    prior: D
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: A
+- condition:
+    current: A
+    prior: D
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: Q
+- condition:
+    current: A
+    prior: A
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 8
+    parents_le: 8
+  op:
+    kind: TurnToState
+    operand: X
+- condition:
+    current: A
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: U
+- condition:
+    current: K
+    prior: K
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: s29
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: Q
+- condition:
+    current: s29
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: U
+- condition:
+    current: G
+    prior: any
+    conn_ge: 1
+    conn_le: 1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: G
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 1
+    conn_le: 1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: Q
+- condition:
+    current: G
+    prior: any
+    conn_ge: 3
+    conn_le: 3
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: S
+- condition:
+    current: G
+    prior: any
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: 6
+    parents_le: 6
+  op:
+    kind: GiveBirthConnected
+    operand: S
+- condition:
+    current: E
+    prior: any
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: 5
+    parents_le: 5
+  op:
+    kind: TurnToState
+    operand: s28
+- condition:
+    current: s28
+    prior: E
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: X
+- condition:
+    current: Q
+    prior: any
+    conn_ge: 4
+    conn_le: 4
+    parents_ge: 8
+    parents_le: 8
+  op:
+    kind: DisconnectFrom
+    operand: U
+- condition:
+    current: G
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 8
+    parents_le: 8
+  op:
+    kind: TryToConnectWithNearest
+    operand: O
+- condition:
+    current: E
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 6
+    parents_le: 6
+  op:
+    kind: TurnToState
+    operand: K
+- condition:
+    current: G
+    prior: G
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 4
+    parents_le: 4
+  op:
+    kind: TurnToState
+    operand: X
+- condition:
+    current: E
+    prior: E
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: 7
+    parents_le: 7
+  op:
+    kind: TurnToState
+    operand: K
+- condition:
+    current: U
+    prior: any
+    conn_ge: 1
+    conn_le: 1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: s45
+- condition:
+    current: U
+    prior: A
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: E
+- condition:
+    current: X
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: s29
+- condition:
+    current: E
+    prior: E
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 4
+    parents_le: 4
+  op:
+    kind: TryToConnectWithNearest
+    operand: A
+- condition:
+    current: U
+    prior: s29
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: D
+- condition:
+    current: G
+    prior: G
+    conn_ge: 4
+    conn_le: 4
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: DisconnectFrom
+    operand: Q
+- condition:
+    current: K
+    prior: E
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TryToConnectWithNearest
+    operand: s56
+- condition:
+    current: S
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: O
+- condition:
+    current: U
+    prior: U
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: 0
+    parents_le: 0
+  op:
+    kind: TryToConnectWithNearest
+    operand: A
+- condition:
+    current: U
+    prior: U
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: 0
+    parents_le: 0
+  op:
+    kind: TryToConnectWithNearest
+    operand: A
+- condition:
+    current: G
+    prior: any
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 8
+    parents_le: 8
+  op:
+    kind: TryToConnectWithNearest
+    operand: T
+- condition:
+    current: E
+    prior: E
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: G
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 2
+    conn_le: 2
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: G
+- condition:
+    current: U
+    prior: U
+    conn_ge: 1
+    conn_le: 1
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: GiveBirthConnected
+    operand: A
+- condition:
+    current: U
+    prior: U
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 2
+    parents_le: 2
+  op:
+    kind: TryToConnectWithNearest
+    operand: s28
+- condition:
+    current: E
+    prior: U
+    conn_ge: 3
+    conn_le: 3
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: TurnToState
+    operand: X
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 4
+    conn_le: 4
+    parents_ge: 6
+    parents_le: 6
+  op:
+    kind: DisconnectFrom
+    operand: U
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 4
+    conn_le: 4
+    parents_ge: 4
+    parents_le: 4
+  op:
+    kind: DisconnectFrom
+    operand: U
+- condition:
+    current: Q
+    prior: Q
+    conn_ge: 4
+    conn_le: 4
+    parents_ge: -1
+    parents_le: -1
+  op:
+    kind: DisconnectFrom
+    operand: T
+- condition:
+    current: U
+    prior: U
+    conn_ge: -1
+    conn_le: -1
+    parents_ge: 1
+    parents_le: 1
+  op:
+    kind: TurnToState
+    operand: T
