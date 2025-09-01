@@ -40,3 +40,12 @@ def test_cross_discrimination_hex():
     tm, qm, hm = TriangleMesh(), QuadMesh(), HexMesh()
     st, sq, sh = tm.score(G), qm.score(G), hm.score(G)
     assert sh > max(st, sq)
+
+def test_hex_single_beats_large_triangle():
+    from guca.utils.lattices import make_hex_patch, make_tri_patch
+    from guca.fitness.meshes import HexMesh
+    hm = HexMesh()  # has presence bonus by default
+    G_hex1 = make_hex_patch("block", 1)
+    G_tri10 = make_tri_patch("block", 10)
+    assert hm.score(G_hex1) > hm.score(G_tri10)
+
