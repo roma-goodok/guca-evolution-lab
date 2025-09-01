@@ -14,9 +14,9 @@
 
 ---
 ## Week 1.5 — 2D visualization of GUM results (new)
-- [ ] Simple 2D renderer for final graph snapshot (PNG)
-- [ ] CLI flag to save image on demand (no UI)
-- [ ] Output-path conventions for tests vs ad-hoc runs
+- [x] Simple 2D renderer for final graph snapshot (PNG)
+- [x] CLI flag to save image on demand (no UI)
+- [x] Output-path conventions for tests vs ad-hoc runs
 
 **Deliverables**
 - `viz/plot2d.py` with a small `save_graph_png(graph, path, **opts)` function
@@ -39,7 +39,9 @@
 
 ## Week 2 — Deterministic “connect nearest” & engine config
 
-**Goal.** Remove order-dependent ambiguity from the “connect to nearest” operation and make single-run engine behavior reproducible and configurable.
+**Goal.** 
+
+- [x] Remove order-dependent ambiguity from the “connect to nearest” operation and make single-run engine behavior reproducible and configurable.
 
 ### Deliverables
 - Global engine options (machine-level defaults):
