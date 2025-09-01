@@ -49,3 +49,15 @@ def test_hex_single_beats_large_triangle():
     G_tri10 = make_tri_patch("block", 10)
     assert hm.score(G_hex1) > hm.score(G_tri10)
 
+def test_hex_forbidden_faces_penalizes_triangles():
+    from guca.fitness.meshes import HexMesh, MeshWeights
+    from guca.utils.lattices import make_tri_patch
+
+    tri = make_tri_patch("block", 6)
+    hm_no_forbid = HexMesh(weights=MeshWeights(target_presence_bonus=0.0))  # isolate effect
+    hm_forbid = HexMesh(weights=MeshWeights(target_presence_bonus=0.0, w_forbidden_faces={3: 0.8}))
+
+    s0 = hm_no_forbid.score(tri)
+    s1 = hm_forbid.score(tri)
+    assert s1 < s0  # triangle faces are penalized under HexMesh with forbidden {3: 0.8}
+
