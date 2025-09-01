@@ -166,6 +166,9 @@ class PlanarBasic:
           * Prefer emb.faces() when available (NetworkX >= 2.8+),
             otherwise traverse each *directed* edge's left face once
             using emb.traverse_face(u, v), marking visited directed edges.
+          * We intentionally DO NOT deduplicate faces that share the same node-set
+            with reverse orientation; keeping both is necessary to distinguish the
+            outer vs inner face on simple cycles.
         """
         faces: List[List[Hash]] = []
 
@@ -185,32 +188,17 @@ class PlanarBasic:
                 try:
                     cycle = list(emb.traverse_face(u, v))
                 except Exception:
-                    # As a last resort, skip invalid traversals.
                     continue
                 if len(cycle) >= 2:
-                    # mark all directed edges along this face
+                    # mark all directed edges along this face (orientation matters)
                     for i in range(len(cycle)):
                         a = cycle[i]
                         b = cycle[(i + 1) % len(cycle)]
                         visited.add((a, b))
                     faces.append(cycle)
 
-        # Deduplicate by canonical rotation to be safe (should be unique already)
-        canon = set()
-        unique_faces: List[List[Hash]] = []
-        for cyc in faces:
-            # canonical string by rotating so that min label is first, direction chosen lexicographically
-            seq = list(cyc)
-            rmin = min(range(len(seq)), key=lambda i: str(seq[i]))
-            rot = seq[rmin:] + seq[:rmin]
-            rot_rev = list(reversed(seq))
-            rmin_rev = min(range(len(rot_rev)), key=lambda i: str(rot_rev[i]))
-            rot_rev = rot_rev[rmin_rev:] + rot_rev[:rmin_rev]
-            key = tuple(min(rot, rot_rev, key=lambda s: tuple(map(str, s))))
-            if key not in canon:
-                canon.add(key)
-                unique_faces.append(list(key))
-        return unique_faces
+        return faces
+
 
     @staticmethod
     def _faces_from_cycles_proxy(G: nx.Graph) -> List[List[Hash]]:
