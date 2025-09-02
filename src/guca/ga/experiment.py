@@ -1,10 +1,86 @@
 # src/guca/ga/experiment.py
 from __future__ import annotations
-from dataclasses import dataclass
+
+from dataclasses import dataclass, asdict, field as dc_field, is_dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
 from guca.engine.config import MachineConfig
+
+# OmegaConf is optional at import time (keeps module import clean in any env)
+try:
+    from omegaconf import DictConfig, OmegaConf  # type: ignore
+except Exception:
+    DictConfig = None  # type: ignore
+    OmegaConf = None   # type: ignore
+
+
+# ---- Sub-configs as dataclasses (safe defaults) -------------------------------
+
+@dataclass
+class StructuralCfg:
+    insert_pb: float = 0.20
+    delete_pb: float = 0.15
+    duplicate_pb: float = 0.10
+
+@dataclass
+class FieldCfg:
+    bitflip_pb: float = 0.10
+    byte_pb: float = 0.05
+    allbytes_pb: float = 0.02
+    rotate_pb: float = 0.05
+    enum_delta_pb: float = 0.15
+
+@dataclass
+class CheckpointCfg:
+    save_best: bool = True
+    save_last: bool = True
+    save_every: int = 5
+    save_population: str = "best"  # none | best | all
+    fmt: str = "json"              # json | yaml (best artifact only)
+    out_dir: str = "checkpoints"
+
+
+# ---- Helper: normalize nested value -> dataclass instance ---------------------
+
+def _normalize_dc(cls, value):
+    """
+    Convert 'value' to a dataclass instance of type 'cls'. Handles:
+    - already a dataclass instance
+    - OmegaConf DictConfig (via OmegaConf.to_container)
+    - plain dict
+    - old-style object with attributes
+    """
+    if is_dataclass(value):
+        return value
+
+    # OmegaConf DictConfig -> dict
+    if DictConfig is not None and isinstance(value, DictConfig):  # type: ignore
+        try:
+            container = OmegaConf.to_container(value, resolve=True)  # type: ignore
+            if isinstance(container, dict):
+                return cls(**container)
+        except Exception:
+            pass
+
+    # plain dict
+    if isinstance(value, dict):
+        return cls(**value)
+
+    # old-style object with attributes
+    if hasattr(value, "__dict__"):
+        data = {}
+        # only take fields known to the target dataclass
+        for k in getattr(cls, "__dataclass_fields__", {}):
+            if hasattr(value, k):
+                data[k] = getattr(value, k)
+        return cls(**data)
+
+    # fallback to defaults
+    return cls()
+
+
+# ---- Main Hydra-instantiated GA config ---------------------------------------
 
 @dataclass
 class GAExperiment:
@@ -21,35 +97,19 @@ class GAExperiment:
     min_len: int = 1
     max_len: int = 64
 
+    # Nested groups (dataclasses with default_factory)
+    structural: StructuralCfg = dc_field(default_factory=StructuralCfg)
+    field: FieldCfg = dc_field(default_factory=FieldCfg)
+    checkpoint: CheckpointCfg = dc_field(default_factory=CheckpointCfg)
+
+    # UI / ergonomics
     progress: bool = True
 
-    # Structural mutation
-    class Structural:
-        insert_pb: float = 0.20
-        delete_pb: float = 0.15
-        duplicate_pb: float = 0.10
-    structural: Structural = Structural()
-
-    # Field mutation
-    class Field:
-        bitflip_pb: float = 0.10
-        byte_pb: float = 0.05
-        allbytes_pb: float = 0.02
-        rotate_pb: float = 0.05
-        enum_delta_pb: float = 0.15
-    field: Field = Field()
-
-    # Checkpointing
-    class Checkpoint:
-        save_best: bool = True
-        save_last: bool = True
-        save_every: int = 5
-        save_population: str = "best"  # none|best|all
-        fmt: str = "json"              # json|yaml
-        out_dir: str = "checkpoints"
-    checkpoint: Checkpoint = Checkpoint()
-
-    # Hydra will pass states / seed / n_workers via run() args
+    def __post_init__(self):
+        # Normalize any form (dataclass, DictConfig, dict, legacy object) -> dataclass instance
+        self.structural = _normalize_dc(StructuralCfg, self.structural)
+        self.field      = _normalize_dc(FieldCfg,      self.field)
+        self.checkpoint = _normalize_dc(CheckpointCfg, self.checkpoint)
 
     def run(
         self,
@@ -61,21 +121,16 @@ class GAExperiment:
         n_workers: int,
         run_dir: Path | None = None,
     ) -> Dict[str, Any]:
-        """
-        Launch GA using guca.ga.toolbox.evolve (added in subsequent step).
-        For now, return a minimal summary if toolbox isn't available.
-        """
         try:
             from guca.ga.toolbox import evolve
         except Exception:
             return {
                 "status": "toolbox_missing",
-                "pop_size": self.pop_size,
-                "generations": self.generations,
                 "note": "Add guca.ga.toolbox.evolve to run the GA loop."
             }
 
         run_dir = run_dir or Path.cwd()
+
         summary = evolve(
             fitness=fitness,
             machine_cfg={
@@ -99,14 +154,14 @@ class GAExperiment:
                 "init_len": self.init_len,
                 "min_len": self.min_len,
                 "max_len": self.max_len,
-                "structural": vars(self.structural),
-                "field": vars(self.field),
+                "structural": asdict(self.structural),
+                "field": asdict(self.field),
             },
             states=states,
             seed=seed,
             n_workers=n_workers,
-            checkpoint_cfg=vars(self.checkpoint),
+            checkpoint_cfg=asdict(self.checkpoint),  # <- fmt flows through (yaml/json)
             run_dir=run_dir,
-            progress=self.progress, 
+            progress=self.progress,
         )
         return summary

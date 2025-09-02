@@ -42,26 +42,26 @@ machine:
 
 # -------- Fitness (choose ONE; comment others) --------
 
-# Mesh: Hex
-fitness:
-  _target_: guca.fitness.meshes.HexMesh
-  weights:
-    _target_: guca.fitness.meshes.MeshWeights
-    w_face: 1.0
-    w_deg: 0.6
-    w_shell: 0.4
-    w_nontarget: 0.5
-    w_internal: 0.30
-    w_size: 0.20
-    size_cap: 10
-    target_presence_bonus: 1.6
-    w_forbidden_faces: {3: 0.8}
-
-# # Mesh: Triangle
+# # Mesh: Hex
 # fitness:
-#   _target_: guca.fitness.meshes.TriangleMesh
+#   _target_: guca.fitness.meshes.HexMesh
 #   weights:
 #     _target_: guca.fitness.meshes.MeshWeights
+#     w_face: 1.0
+#     w_deg: 0.6
+#     w_shell: 0.4
+#     w_nontarget: 0.5
+#     w_internal: 0.30
+#     w_size: 0.20
+#     size_cap: 10
+#     target_presence_bonus: 1.6
+#     w_forbidden_faces: {3: 0.8}
+
+# Mesh: Triangle
+fitness:
+  _target_: guca.fitness.meshes.TriangleMesh
+  weights:
+    _target_: guca.fitness.meshes.MeshWeights
 
 # # Mesh: Quad
 # fitness:
@@ -101,11 +101,11 @@ ga:
   # Genome length bounds & initialization
   init_len: 6
   min_len: 1
-  max_len: 64
+  max_len: 256
 
   # Structural mutation rates
   structural:
-    insert_pb: 0.20
+    insert_pb: 0.5
     delete_pb: 0.15
     duplicate_pb: 0.10
 
@@ -122,7 +122,7 @@ ga:
     save_best: true
     save_last: true
     save_every: 5              # 0 disables periodic
-    save_population: best      # none | best | all
+    save_population: all      # none | best | all
     fmt: json                  # json (hex genes) | yaml (rules)
     out_dir: checkpoints       # relative to Hydra run dir
 

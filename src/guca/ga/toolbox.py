@@ -352,7 +352,7 @@ def evolve(
     toolbox.register("mutate", mutate)
     toolbox.register("select", tools.selTournament, tournsize=int(ga_cfg.get("tournament_k", 3)))
 
-    # evaluation (DEAP API wrapper) – actual heavy work happens in _eval_only
+    # evaluation wrapper (DEAP API); real work in _eval_only
     def evaluate(individual: List[int]) -> Tuple[float]:
         return (_eval_only(individual),)
 
