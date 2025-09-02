@@ -126,5 +126,6 @@ ga:
     fmt: json                  # json (hex genes) | yaml (rules)
     out_dir: checkpoints       # relative to Hydra run dir
     export_full_condition_shape: true
+    save_best_png: true
 
   progress: true      # <<< show tqdm progress bar

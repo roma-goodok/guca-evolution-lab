@@ -40,6 +40,7 @@ class CheckpointCfg:
     fmt: str = "json"              # json | yaml (best artifact only)
     out_dir: str = "checkpoints"
     export_full_condition_shape: bool = False
+    save_best_png: bool = False
 
 
 # ---- Helper: normalize nested value -> dataclass instance ---------------------

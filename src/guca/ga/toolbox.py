@@ -219,10 +219,9 @@ def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition:
         operand = None if r.operand is None else states[int(r.operand)]
 
         if full_condition:
-            # keep the YAML runnable: extras under a separate key to avoid breaking your parser
             row = {
                 "condition": {"current": cur},
-                "condition_meta": {
+                "condition_meta": {      # non-encoded fields for readability only
                     "prior": None,
                     "conn_ge": None,
                     "conn_le": None,
@@ -238,6 +237,7 @@ def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition:
             row["op"]["operand"] = operand
         out.append(row)
     return out
+
 
 
 
@@ -265,6 +265,46 @@ def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt
         json.dump({"fitness": float(fitness), "genes": _genes_to_hex(genes)}, f, indent=2)
     out["best"] = str(p)
     return out
+
+
+def _render_best_png_inproc(
+    ckpt_dir: Path,
+    genes: List[int],
+    states: List[str],
+    machine_cfg: Dict[str, Any],
+    *,
+    out_name: str = "best.png",
+) -> Optional[str]:
+    """
+    Simulate the genome and render G as a PNG (no subprocess).
+    Prefer your debug renderer if available; otherwise fallback to networkx+matplotlib.
+    """
+    G = simulate_genome(genes, states=states, machine_cfg=machine_cfg)
+    out_png = ckpt_dir / out_name
+    try:
+        # Preferred: your project renderer (keeps visuals consistent with CLI)
+        from guca.utils.debug_draw_png import draw_graph_png  # adjust name if your module exposes another name
+        draw_graph_png(G, str(out_png))
+        return str(out_png)
+    except Exception:
+        # Fallback (always available)
+        try:
+            import matplotlib.pyplot as plt
+            try:
+                pos = nx.planar_layout(G)
+            except Exception:
+                pos = nx.spring_layout(G, seed=42)
+            plt.figure(figsize=(6, 6))
+            nx.draw_networkx(G, pos, with_labels=False, node_size=120, width=1.0)
+            plt.axis("off")
+            plt.tight_layout()
+            plt.savefig(out_png, dpi=160)
+            plt.close()
+            return str(out_png)
+        except Exception as e:
+            print(f"[WARN] Could not render best.png in-process: {e}")
+            return None
+
 
 
 def _write_checkpoint_pop(ckpt_dir: Path, pop: List[List[int]], fits: List[float], mode: str) -> Optional[str]:
@@ -420,6 +460,7 @@ def evolve(
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
     full_cond = bool(ckpt.get("export_full_condition_shape", False))
+    save_best_png = bool(ckpt.get("save_best_png", False))
 
 
 
@@ -516,6 +557,11 @@ def evolve(
                 "generations": ngen
             }, f, indent=2)
         paths["last"] = str(last_path)
+    # optional in-process PNG
+    if save_best_png:
+        png = _render_best_png_inproc(ckpt_dir, list(best), states, machine_cfg)
+        if png:
+            paths["best_png"] = png
 
     # close the pool if any
     if 'pool' in locals() and pool is not None:
