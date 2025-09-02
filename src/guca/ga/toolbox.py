@@ -2,31 +2,29 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import random
 
 import networkx as nx
 from deap import base, creator, tools
+from multiprocessing import get_context
 
 from guca.ga.encoding import (
     Rule, OpKind, encode_rule, decode_gene, random_gene, labels_to_state_maps
 )
 from guca.ga.operators import splice_cx, make_mutate_fn
-from guca.fitness.planar_basic import PlanarBasic
 
-# near imports, add a soft import for tqdm
+# soft import for tqdm
 try:
     from tqdm import tqdm  # type: ignore
 except Exception:          # pragma: no cover
     tqdm = None
 
 
-
-# -----------------------------
+# =============================
 # Mini engine: genome -> graph
-# -----------------------------
+# =============================
 def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth: int, tie_breaker: str, connect_all: bool) -> List:
     """
     BFS from u up to max_depth, return nodes at minimal distance that match operand_sid (or any if None).
@@ -68,7 +66,7 @@ def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth
     elif tie_breaker == "by_creation":
         return [min(cands)]  # we don't track creation index; ids are stable
     else:
-        # random choice — caller must seed RNG beforehand
+        # random choice — caller must seed RNG beforehand if reproducibility is required
         import random
         return [random.choice(cands)]
 
@@ -209,9 +207,9 @@ def simulate_genome(genes: List[int], *, states: List[str], machine_cfg: Dict[st
     return G
 
 
-# -----------------------------
+# =======================
 # Checkpoint writers
-# -----------------------------
+# =======================
 def _genes_to_hex(genes: List[int]) -> List[str]:
     return [f"{g:016x}" for g in genes]
 
@@ -234,21 +232,20 @@ def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out = {}
     if fmt == "yaml":
-        data = {"fitness": float(fitness), "rules": _genes_to_yaml_rules(genes, states)}
-        p = ckpt_dir / "best.yaml"
         try:
             import yaml
+            data = {"fitness": float(fitness), "rules": _genes_to_yaml_rules(genes, states)}
+            p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=False)
-        except Exception:
-            # Always write JSON fallback
-            p = ckpt_dir / "best.json"
-            with open(p, "w", encoding="utf-8") as f:
-                json.dump({"fitness": float(fitness), "genes": _genes_to_hex(genes)}, f, indent=2)
-    else:
-        p = ckpt_dir / "best.json"
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump({"fitness": float(fitness), "genes": _genes_to_hex(genes)}, f, indent=2)
+            out["best"] = str(p)
+            return out
+        except Exception as e:
+            print(f"[WARN] YAML requested but unavailable ({e}); falling back to JSON.")
+
+    p = ckpt_dir / "best.json"
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"fitness": float(fitness), "genes": _genes_to_hex(genes)}, f, indent=2)
     out["best"] = str(p)
     return out
 
@@ -281,9 +278,27 @@ def _write_checkpoint_epoch(ckpt_dir: Path, gen: int, pop: List[List[int]], fits
     return str(p)
 
 
-# -----------------------------
+# ===================================
+# Parallel eval: worker context
+# ===================================
+_WFIT = None
+_WSTATES = None
+_WMCFG = None
+
+def _init_worker(fitness, states, machine_cfg):
+    global _WFIT, _WSTATES, _WMCFG
+    _WFIT = fitness
+    _WSTATES = states
+    _WMCFG = machine_cfg
+
+def _eval_only(genes: List[int]) -> float:
+    G = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG)
+    return float(_WFIT.score(G))
+
+
+# ======================
 # Evolve loop
-# -----------------------------
+# ======================
 def evolve(
     *,
     fitness,                         # instantiated fitness object (TriangleMesh, HexMesh, BySample, ...)
@@ -337,14 +352,9 @@ def evolve(
     toolbox.register("mutate", mutate)
     toolbox.register("select", tools.selTournament, tournsize=int(ga_cfg.get("tournament_k", 3)))
 
-    # evaluation
+    # evaluation (DEAP API wrapper) – actual heavy work happens in _eval_only
     def evaluate(individual: List[int]) -> Tuple[float]:
-        # simulate genome -> graph
-        G = simulate_genome(individual, states=states, machine_cfg=machine_cfg)
-        # score
-        score = float(fitness.score(G))
-        # incorporate PlanarBasic viability (already included within .score)
-        return (score,)
+        return (_eval_only(individual),)
 
     toolbox.register("evaluate", evaluate)
 
@@ -358,8 +368,25 @@ def evolve(
     pop = toolbox.population(n=pop_size)
     hof = tools.HallOfFame(max(1, elitism))
 
+    # --------- parallel map setup ----------
+    global _WFIT, _WSTATES, _WMCFG
+    _WFIT, _WSTATES, _WMCFG = fitness, states, machine_cfg
+
+    pool = None
+    if n_workers and n_workers > 0:
+        try:
+            ctx = get_context("spawn")
+            pool = ctx.Pool(processes=int(n_workers), initializer=_init_worker,
+                            initargs=(fitness, states, machine_cfg))
+            map_fn = pool.map
+        except Exception as e:
+            print(f"[WARN] parallel init failed ({e}); falling back to serial.")
+            map_fn = map
+    else:
+        map_fn = map
+
     # evaluate initial pop
-    fits = list(map(lambda ind: toolbox.evaluate(ind)[0], pop))
+    fits = list(map_fn(_eval_only, pop))
     for ind, fit in zip(pop, fits):
         ind.fitness.values = (fit,)
 
@@ -386,15 +413,18 @@ def evolve(
         _write_checkpoint_epoch(ckpt_dir, 0, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
 
     record0 = stats.compile(pop)
+    best_len0 = len(hof[0]) if len(hof) else 0
 
-    # --- Progress bar setup ---
+    # --- progress bar setup ---
     pbar = None
     if progress and tqdm is not None:
         pbar = tqdm(total=ngen, desc="epochs", leave=True, dynamic_ncols=True)
-        pbar.set_postfix(max=f"{record0['max']:.4f}")
+        pbar.set_postfix(max=f"{record0['max']:.4f}",
+                         avg=f"{record0['avg']:.4f}",
+                         len=best_len0)
     elif progress:
-        print(f"gen 0/{ngen}  max={record0['max']:.4f}")
-    
+        print(f"gen 0/{ngen}  max={record0['max']:.4f}  avg={record0['avg']:.4f}  len={best_len0}")
+
     # evolve
     for gen in range(1, ngen + 1):
         # elitism: copy best E
@@ -422,26 +452,34 @@ def evolve(
 
         # evaluate invalid
         invalid = [ind for ind in pop if not ind.fitness.valid]
-        for ind in invalid:
-            ind.fitness.values = toolbox.evaluate(ind)
+        if invalid:
+            newfits = list(map_fn(_eval_only, invalid))
+            for ind, fit in zip(invalid, newfits):
+                ind.fitness.values = (fit,)
 
         # update HOF & checkpoints
         hof.update(pop)
-        record = stats.compile(pop)  # noqa: F841  (can be printed if needed)
+        record = stats.compile(pop)
+
+        best_len = len(hof[0]) if len(hof) else 0
 
         if save_every and gen % save_every == 0:
-            _write_checkpoint_epoch(ckpt_dir, gen, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
+            _write_checkpoint_epoch(ckpt_dir, gen,
+                                    [list(ind) for ind in pop],
+                                    [ind.fitness.values[0] for ind in pop])
 
-        # --- progress update ---
+        # progress update
         if pbar is not None:
-            pbar.set_postfix(max=f"{record['max']:.4f}")
+            pbar.set_postfix(max=f"{record['max']:.4f}",
+                             avg=f"{record['avg']:.4f}",
+                             len=best_len)
             pbar.update(1)
         elif progress:
-            print(f"gen {gen}/{ngen}  max={record['max']:.4f}")
+            print(f"gen {gen}/{ngen}  max={record['max']:.4f}  avg={record['avg']:.4f}  len={best_len}")
 
     if pbar is not None:
         pbar.close()
-    
+
     # final checkpoints
     best = hof[0]
     paths = {}
@@ -457,6 +495,11 @@ def evolve(
                 "generations": ngen
             }, f, indent=2)
         paths["last"] = str(last_path)
+
+    # close the pool if any
+    if 'pool' in locals() and pool is not None:
+        pool.close()
+        pool.join()
 
     return {
         "status": "ok",
