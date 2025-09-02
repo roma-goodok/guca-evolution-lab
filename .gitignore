@@ -29,3 +29,4 @@ docs/xx_legacy/*.json
 # Avoid stray PNGs in repo root
 /*.png
 
+logbook/
