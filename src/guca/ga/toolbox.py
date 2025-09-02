@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from collections import Counter
+
 import random
 
 import networkx as nx
@@ -210,7 +212,17 @@ def _genes_to_hex(genes: List[int]) -> List[str]:
     return [f"{g:016x}" for g in genes]
 
 
-def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition: bool = False) -> List[Dict[str, Any]]:
+def _genes_to_yaml_rules(
+    genes: List[int],
+    states: List[str],
+    *,
+    full_condition: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Convert encoded genes to YAML-rule dicts.
+    If full_condition=True, include a 'condition_meta' block with placeholders
+    for predicates not yet encoded (keeps YAML runnable by your CLI).
+    """
     out: List[Dict[str, Any]] = []
     for g in genes:
         r = decode_gene(g, state_count=len(states))
@@ -221,7 +233,7 @@ def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition:
         if full_condition:
             row = {
                 "condition": {"current": cur},
-                "condition_meta": {      # non-encoded fields for readability only
+                "condition_meta": {
                     "prior": None,
                     "conn_ge": None,
                     "conn_le": None,
@@ -235,6 +247,7 @@ def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition:
 
         if operand is not None:
             row["op"]["operand"] = operand
+
         out.append(row)
     return out
 
@@ -245,13 +258,34 @@ def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition:
 
 
 
-def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt: str, states: List[str], *, full_condition: bool = False) -> Dict[str, str]:
+
+def _write_checkpoint_best(
+    ckpt_dir: Path,
+    genes: List[int],
+    fitness: float,
+    fmt: str,
+    states: List[str],
+    *,
+    full_condition: bool = False,
+    graph_summary: Optional[Dict[str, Any]] = None
+) -> Dict[str, str]:
+    """
+    Write the 'best' artifact as YAML or JSON.
+    - YAML: { fitness, rules[, graph_summary] } using the runnable rule format
+    - JSON: { fitness, genes[, graph_summary] } with hex-encoded genes
+    """
     ckpt_dir.mkdir(parents=True, exist_ok=True)
-    out = {}
+    out: Dict[str, str] = {}
+
     if fmt == "yaml":
         try:
             import yaml
-            data = {"fitness": float(fitness), "rules": _genes_to_yaml_rules(genes, states, full_condition=full_condition)}
+            data = {
+                "fitness": float(fitness),
+                "rules": _genes_to_yaml_rules(genes, states, full_condition=full_condition),
+            }
+            if graph_summary is not None:
+                data["graph_summary"] = graph_summary
             p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=False)
@@ -260,50 +294,102 @@ def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt
         except Exception as e:
             print(f"[WARN] YAML requested but unavailable ({e}); falling back to JSON.")
 
+    # JSON fallback
     p = ckpt_dir / "best.json"
+    payload: Dict[str, Any] = {
+        "fitness": float(fitness),
+        "genes": _genes_to_hex(genes),
+    }
+    if graph_summary is not None:
+        payload["graph_summary"] = graph_summary
     with open(p, "w", encoding="utf-8") as f:
-        json.dump({"fitness": float(fitness), "genes": _genes_to_hex(genes)}, f, indent=2)
+        json.dump(payload, f, indent=2)
     out["best"] = str(p)
     return out
 
 
+def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
+    """
+    Build a compact summary identical in shape to run_gum:
+    { "edges": int, "nodes": int, "states_count": {label: count, ...} }
+    """
+    counts = Counter(states[int(G.nodes[n].get("state_id", 0))] for n in G.nodes())
+    return {
+        "edges": int(G.number_of_edges()),
+        "nodes": int(G.number_of_nodes()),
+        "states_count": dict(counts),
+    }
+
+
+
 def _render_best_png_inproc(
     ckpt_dir: Path,
-    genes: List[int],
-    states: List[str],
-    machine_cfg: Dict[str, Any],
+    G: nx.Graph,
     *,
     out_name: str = "best.png",
 ) -> Optional[str]:
     """
-    Simulate the genome and render G as a PNG (no subprocess).
-    Prefer your debug renderer if available; otherwise fallback to networkx+matplotlib.
+    Render an already-evolved graph G to PNG (no subprocess).
+    Visuals aligned with run_gum:
+      - black background
+      - per-state 16-tone color wheel (via node 'state_id')
+      - edges-only by default; if no edges, draw tiny colored dots
     """
-    G = simulate_genome(genes, states=states, machine_cfg=machine_cfg)
+    import colorsys
+    import matplotlib.pyplot as plt
+
     out_png = ckpt_dir / out_name
+
+    # ---- layout ----
     try:
-        # Preferred: your project renderer (keeps visuals consistent with CLI)
-        from guca.utils.debug_draw_png import draw_graph_png  # adjust name if your module exposes another name
-        draw_graph_png(G, str(out_png))
-        return str(out_png)
+        pos = nx.spring_layout(G, seed=42)
     except Exception:
-        # Fallback (always available)
         try:
-            import matplotlib.pyplot as plt
-            try:
-                pos = nx.planar_layout(G)
-            except Exception:
-                pos = nx.spring_layout(G, seed=42)
-            plt.figure(figsize=(6, 6))
-            nx.draw_networkx(G, pos, with_labels=False, node_size=120, width=1.0)
-            plt.axis("off")
-            plt.tight_layout()
-            plt.savefig(out_png, dpi=160)
-            plt.close()
-            return str(out_png)
-        except Exception as e:
-            print(f"[WARN] Could not render best.png in-process: {e}")
-            return None
+            pos = nx.kamada_kawai_layout(G)
+        except Exception:
+            pos = nx.circular_layout(G)
+
+    # ---- color mapping by state_id ----
+    def state_color(sid: int):
+        hue = (int(sid) % 16) / 16.0
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.65, 1.0)
+        return (r, g, b)
+
+    node_colors = {
+        n: state_color(int(G.nodes[n].get("state_id", 0)))
+        for n in G.nodes()
+    }
+
+    # ---- figure / axes (black bg) ----
+    fig = plt.figure(figsize=(6, 6), facecolor="black")
+    ax = plt.gca()
+    ax.set_facecolor("black")
+
+    N = max(1, G.number_of_nodes())
+    E = G.number_of_edges()
+
+    # ---- edges-only; fallback to tiny dots if no edges ----
+    if E > 0:
+        edges = list(G.edges())
+        edge_colors = [
+            (
+                (node_colors[u][0] + node_colors[v][0]) / 2.0,
+                (node_colors[u][1] + node_colors[v][1]) / 2.0,
+                (node_colors[u][2] + node_colors[v][2]) / 2.0,
+            )
+            for (u, v) in edges
+        ]
+        edge_width = max(0.6, 1.8 / max(1.0, (N ** 0.5) / 6.0))
+        nx.draw_networkx_edges(G, pos, edgelist=edges, edge_color=edge_colors, width=edge_width, ax=ax)
+    else:
+        dot_size = max(6.0, 80.0 / (N ** 0.5))
+        nx.draw_networkx_nodes(G, pos, node_size=dot_size, node_color=[node_colors[n] for n in G.nodes()], ax=ax)
+
+    ax.set_axis_off()
+    plt.tight_layout(pad=0)
+    fig.savefig(out_png, dpi=180, facecolor=fig.get_facecolor(), edgecolor="none")
+    plt.close(fig)
+    return str(out_png)
 
 
 
@@ -545,8 +631,16 @@ def evolve(
     # final checkpoints
     best = hof[0]
     paths = {}
-    if save_best:        
-        paths.update(_write_checkpoint_best(ckpt_dir, list(best), best.fitness.values[0], fmt, states, full_condition=full_cond))
+
+    G_best = simulate_genome(list(best), states=states, machine_cfg=machine_cfg)
+    gsum = _graph_summary(G_best, states)
+
+    if save_best:
+        paths.update(_write_checkpoint_best(
+            ckpt_dir, list(best), best.fitness.values[0], fmt, states,
+            graph_summary=gsum
+        ))
+
     if save_last:
         last_path = ckpt_dir / "last.json"
         with open(last_path, "w", encoding="utf-8") as f:
@@ -554,14 +648,17 @@ def evolve(
                 "best_fitness": float(best.fitness.values[0]),
                 "best_genes": _genes_to_hex(list(best)),
                 "pop_size": pop_size,
-                "generations": ngen
+                "generations": ngen,
+                "graph_summary": gsum,
             }, f, indent=2)
         paths["last"] = str(last_path)
-    # optional in-process PNG
+
+    # optional in-process PNG (now using the already-simulated G_best)
     if save_best_png:
-        png = _render_best_png_inproc(ckpt_dir, list(best), states, machine_cfg)
+        png = _render_best_png_inproc(ckpt_dir, G_best)
         if png:
             paths["best_png"] = png
+
 
     # close the pool if any
     if 'pool' in locals() and pool is not None:
