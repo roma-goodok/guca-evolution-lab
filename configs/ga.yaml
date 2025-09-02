@@ -1,0 +1,131 @@
+# configs/ga.yaml
+# Single-file Hydra config for GUCA GA experiments.
+
+# -------- Experiment meta --------
+experiment:
+  name: "exp001_hex_baseline"
+  description: "Baseline hex mesh search with small population"
+  inherits: ""   # optional note; not used by Hydra
+
+# -------- Derived logbook dir from environment --------
+logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/planar_graphs/hex
+
+# -------- Hydra run/sweep dirs --------
+hydra:
+  job:
+    name: ga_experiment
+  run:
+    dir: ${logbook_dir}/${experiment.name}/${hydra.job.name}_${now:%Y%m%d_%H%M%S}
+  sweep:
+    dir: ${logbook_dir}/${experiment.name}/${hydra.job.name}_${now:%Y%m%d_%H%M%S}
+    subdir: ${hydra.job.override_dirname}
+
+# -------- Repro & parallelism --------
+seed: 12345
+n_workers: 0          # 0=serial; >0=multiprocessing
+
+# -------- State alphabet (labels; mapped to ints by order) --------
+states: [A, B, C]
+
+# -------- Machine config (single-node A via omission of init_graph.nodes) --------
+machine:
+  _target_: guca.engine.config.MachineConfig
+  max_steps: 120
+  max_vertices: 2000
+  start_state: A
+  rng_seed: ${seed}
+  nearest_search:
+    _target_: guca.engine.config.NearestSearchCfg
+    max_depth: 2
+    tie_breaker: stable
+    connect_all: false
+
+# -------- Fitness (choose ONE; comment others) --------
+
+# # Mesh: Hex
+# fitness:
+#   _target_: guca.fitness.meshes.HexMesh
+#   weights:
+#     _target_: guca.fitness.meshes.MeshWeights
+#     w_face: 1.0
+#     w_deg: 0.6
+#     w_shell: 0.4
+#     w_nontarget: 0.5
+#     w_internal: 0.30
+#     w_size: 0.20
+#     size_cap: 10
+#     target_presence_bonus: 1.6
+#     w_forbidden_faces: {3: 0.8}
+
+# Mesh: Triangle
+fitness:
+  _target_: guca.fitness.meshes.TriangleMesh
+  weights:
+    _target_: guca.fitness.meshes.MeshWeights
+
+# # Mesh: Quad
+# fitness:
+#   _target_: guca.fitness.meshes.QuadMesh
+#   weights:
+#     _target_: guca.fitness.meshes.MeshWeights
+
+# # BySample from a target patch (factory class)
+# fitness:
+#   _target_: guca.fitness.factory.BySampleFromTarget
+#   target_family: tri     # tri | quad | hex
+#   faces: 6
+#   tri_kind: block
+#   hex_kind: block
+#   rows: 2
+#   cols: 2
+#   weights:
+#     _target_: guca.fitness.by_sample.BySampleWeights
+#     smoothing: 0.0
+#     w_shell: 0.4
+#     w_internal: 0.30
+#     w_size: 0.20
+#     size_cap: 10
+
+# -------- GA runner (toolbox+loop wired internally) --------
+ga:
+  _target_: guca.ga.experiment.GAExperiment
+
+  # Core GA parameters
+  pop_size: 40
+  generations: 20
+  cx_pb: 0.70
+  mut_pb: 0.30
+  tournament_k: 3
+  elitism: 2
+
+  # Genome length bounds & initialization
+  init_len: 6
+  min_len: 1
+  max_len: 256
+
+  # Structural mutation rates
+  structural:
+    insert_pb: 0.5
+    delete_pb: 0.15
+    duplicate_pb: 0.10
+
+  # Field mutation regime
+  field:
+    bitflip_pb: 0.10
+    byte_pb: 0.05
+    allbytes_pb: 0.02
+    rotate_pb: 0.05
+    enum_delta_pb: 0.15
+
+  # Checkpointing
+  checkpoint:
+    save_best: true
+    save_last: true
+    save_every: 5              # 0 disables periodic
+    save_population: all      # none | best | all
+    fmt: json                  # json (hex genes) | yaml (rules)
+    out_dir: checkpoints       # relative to Hydra run dir
+    export_full_condition_shape: true
+    save_best_png: true
+
+  progress: true      # <<< show tqdm progress bar
