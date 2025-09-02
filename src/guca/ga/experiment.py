@@ -39,6 +39,7 @@ class CheckpointCfg:
     save_population: str = "best"  # none | best | all
     fmt: str = "json"              # json | yaml (best artifact only)
     out_dir: str = "checkpoints"
+    export_full_condition_shape: bool = False
 
 
 # ---- Helper: normalize nested value -> dataclass instance ---------------------

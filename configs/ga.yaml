@@ -125,5 +125,6 @@ ga:
     save_population: all      # none | best | all
     fmt: json                  # json (hex genes) | yaml (rules)
     out_dir: checkpoints       # relative to Hydra run dir
+    export_full_condition_shape: true
 
   progress: true      # <<< show tqdm progress bar

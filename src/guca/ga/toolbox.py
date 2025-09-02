@@ -190,20 +190,16 @@ def simulate_genome(genes: List[int], *, states: List[str], machine_cfg: Dict[st
 
     G = nx.Graph()
     G.add_node(0, state_id=int(start_sid))
-
-    # decode rules (first-match semantics by cond_current)
+   
+    # decode rules in *genome order* (priority = gene position)
     rules = [decode_gene(g, state_count=len(states)) for g in genes]
-    # ensure stable order: sort by cond then op id to create a predictable priority
-    rules.sort(key=lambda r: (int(r.cond_current), int(r.op_kind)))
 
     max_steps = int(machine_cfg.get("max_steps", 120))
     for _ in range(max_steps):
         if not _apply_rules_once(G, rules, machine_cfg=machine_cfg):
-            break  # converged / no changes
-
+            break
         if machine_cfg.get("max_vertices", 0) and G.number_of_nodes() >= int(machine_cfg["max_vertices"]):
             break
-
     return G
 
 
@@ -214,27 +210,48 @@ def _genes_to_hex(genes: List[int]) -> List[str]:
     return [f"{g:016x}" for g in genes]
 
 
-def _genes_to_yaml_rules(genes: List[int], states: List[str]) -> List[Dict[str, Any]]:
+def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition: bool = False) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     for g in genes:
         r = decode_gene(g, state_count=len(states))
         cur = states[int(r.cond_current)]
         op = r.op_kind.name
         operand = None if r.operand is None else states[int(r.operand)]
-        row = {"condition": {"current": cur}, "op": {"kind": op}}
+
+        if full_condition:
+            # keep the YAML runnable: extras under a separate key to avoid breaking your parser
+            row = {
+                "condition": {"current": cur},
+                "condition_meta": {
+                    "prior": None,
+                    "conn_ge": None,
+                    "conn_le": None,
+                    "parents_ge": None,
+                    "parents_le": None,
+                },
+                "op": {"kind": op},
+            }
+        else:
+            row = {"condition": {"current": cur}, "op": {"kind": op}}
+
         if operand is not None:
             row["op"]["operand"] = operand
         out.append(row)
     return out
 
 
-def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt: str, states: List[str]) -> Dict[str, str]:
+
+
+
+
+
+def _write_checkpoint_best(ckpt_dir: Path, genes: List[int], fitness: float, fmt: str, states: List[str], *, full_condition: bool = False) -> Dict[str, str]:
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out = {}
     if fmt == "yaml":
         try:
             import yaml
-            data = {"fitness": float(fitness), "rules": _genes_to_yaml_rules(genes, states)}
+            data = {"fitness": float(fitness), "rules": _genes_to_yaml_rules(genes, states, full_condition=full_condition)}
             p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=False)
@@ -402,11 +419,14 @@ def evolve(
     save_last = bool(ckpt.get("save_last", True))
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
+    full_cond = bool(ckpt.get("export_full_condition_shape", False))
+
+
 
     # initial checkpoints (generation 0)
     hof.update(pop)
-    best0 = hof[0]
-    _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states)
+    best0 = hof[0]    
+    _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states, full_condition=full_cond)
     if save_population in ("best", "all"):
         _write_checkpoint_pop(ckpt_dir, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop], save_population)
     if save_every and save_every > 0:
@@ -430,8 +450,9 @@ def evolve(
         # elitism: copy best E
         elites = tools.selBest(pop, k=elitism)
 
-        # offspring via variation
-        offspring = tools.selTournament(pop, k=pop_size - elitism, tournsize=int(ga_cfg.get("tournament_k", 3)))
+        # offspring via variation        
+        parents = elites + tools.selTournament(pop, k=pop_size - elitism, tournsize=int(ga_cfg.get("tournament_k", 3)))
+        offspring = list(map(toolbox.clone, parents))
         offspring = list(map(toolbox.clone, offspring))
 
         # mate
@@ -483,8 +504,8 @@ def evolve(
     # final checkpoints
     best = hof[0]
     paths = {}
-    if save_best:
-        paths.update(_write_checkpoint_best(ckpt_dir, list(best), best.fitness.values[0], fmt, states))
+    if save_best:        
+        paths.update(_write_checkpoint_best(ckpt_dir, list(best), best.fitness.values[0], fmt, states, full_condition=full_cond))
     if save_last:
         last_path = ckpt_dir / "last.json"
         with open(last_path, "w", encoding="utf-8") as f:
