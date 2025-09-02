@@ -439,7 +439,8 @@ def evolve(
         elif progress:
             print(f"gen {gen}/{ngen}  max={record['max']:.4f}")
 
-    pbar.close()
+    if pbar is not None:
+        pbar.close()
     
     # final checkpoints
     best = hof[0]
