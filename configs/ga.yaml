@@ -30,15 +30,15 @@ states: [A, B, C]
 # -------- Machine config (single-node A via omission of init_graph.nodes) --------
 machine:
   _target_: guca.engine.config.MachineConfig
-  max_steps: 120
-  max_vertices: 2000
+  max_steps: 10
+  max_vertices: 100
   start_state: A
   rng_seed: ${seed}
   nearest_search:
     _target_: guca.engine.config.NearestSearchCfg
-    max_depth: 2
+    max_depth: 5
     tie_breaker: stable
-    connect_all: false
+    connect_all: all
 
 # -------- Fitness (choose ONE; comment others) --------
 
@@ -123,7 +123,7 @@ ga:
     save_last: true
     save_every: 5              # 0 disables periodic
     save_population: all      # none | best | all
-    fmt: json                  # json (hex genes) | yaml (rules)
+    fmt: yaml                  # json (hex genes) | yaml (rules)
     out_dir: checkpoints       # relative to Hydra run dir
     export_full_condition_shape: true
     save_best_png: true
