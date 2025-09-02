@@ -21,6 +21,8 @@ class GAExperiment:
     min_len: int = 1
     max_len: int = 64
 
+    progress: bool = True
+
     # Structural mutation
     class Structural:
         insert_pb: float = 0.20
@@ -105,5 +107,6 @@ class GAExperiment:
             n_workers=n_workers,
             checkpoint_cfg=vars(self.checkpoint),
             run_dir=run_dir,
+            progress=self.progress, 
         )
         return summary

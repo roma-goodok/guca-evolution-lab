@@ -16,6 +16,13 @@ from guca.ga.encoding import (
 from guca.ga.operators import splice_cx, make_mutate_fn
 from guca.fitness.planar_basic import PlanarBasic
 
+# near imports, add a soft import for tqdm
+try:
+    from tqdm import tqdm  # type: ignore
+except Exception:          # pragma: no cover
+    tqdm = None
+
+
 
 # -----------------------------
 # Mini engine: genome -> graph
@@ -287,6 +294,7 @@ def evolve(
     n_workers: int,
     checkpoint_cfg: Dict[str, Any],
     run_dir: Path,
+    progress: bool = False,
 ) -> Dict[str, Any]:
     r = random.Random(seed)
     state_count = len(states)
@@ -377,6 +385,16 @@ def evolve(
     if save_every and save_every > 0:
         _write_checkpoint_epoch(ckpt_dir, 0, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
 
+    record0 = stats.compile(pop)
+
+    # --- Progress bar setup ---
+    pbar = None
+    if progress and tqdm is not None:
+        pbar = tqdm(total=ngen, desc="epochs", leave=True, dynamic_ncols=True)
+        pbar.set_postfix(max=f"{record0['max']:.4f}")
+    elif progress:
+        print(f"gen 0/{ngen}  max={record0['max']:.4f}")
+    
     # evolve
     for gen in range(1, ngen + 1):
         # elitism: copy best E
@@ -414,6 +432,15 @@ def evolve(
         if save_every and gen % save_every == 0:
             _write_checkpoint_epoch(ckpt_dir, gen, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
 
+        # --- progress update ---
+        if pbar is not None:
+            pbar.set_postfix(max=f"{record['max']:.4f}")
+            pbar.update(1)
+        elif progress:
+            print(f"gen {gen}/{ngen}  max={record['max']:.4f}")
+
+    pbar.close()
+    
     # final checkpoints
     best = hof[0]
     paths = {}
