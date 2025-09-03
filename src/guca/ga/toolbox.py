@@ -671,5 +671,6 @@ def evolve(
         "best_length": len(best),
         "pop_size": pop_size,
         "generations": ngen,
+        "graph_summary": gsum,
         "checkpoints": paths,
     }
