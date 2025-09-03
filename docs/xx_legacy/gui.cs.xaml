@@ -1,0 +1,280 @@
+<Window x:Class="GeneticGraphUnfoldingMachine.GeneticGUMMainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"        
+        Title="Genetic GUCA" Height="900" Width="1024" WindowStartupLocation="CenterScreen">
+    <Grid Name="mainGrid">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition>
+
+            </ColumnDefinition>
+            <ColumnDefinition Width="400">
+
+            </ColumnDefinition>
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="446*" />
+            <RowDefinition Height="330"/>
+            <RowDefinition Height="25"/>
+        </Grid.RowDefinitions>
+        <!-- -->
+        <!--<gumCanvas:GUMGraphCanvas Name="gumCanvas" ClipToBounds="True" Background="Black" IsEdgesToDisplay="True" IsVerticesToDisplay="True" Margin="0,0,0,0">
+
+        </gumCanvas:GUMGraphCanvas>-->
+        <!-- Right panel: GA controls & settings -->
+        <StackPanel Grid.Column="1" Grid.RowSpan="2" Orientation="Vertical">
+
+            <GroupBox Header="Settings:">
+
+                <StackPanel Grid.Column="1" Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="110" Content="Selection method:"/>
+                        <ComboBox Margin="5" Name="comboBox_SelectionMethod" SelectedIndex="0" Width="250">
+                            <ComboBoxItem Content="Elite"/>
+                            <ComboBoxItem Content="Rank"/>
+                            <ComboBoxItem Content="Roulette"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="110" Content="Population size:" />
+                        <TextBox Name="tbPopulationSize" Margin="5" Width="50" DataContext="{Binding}" Text="100" />
+                        <Label Margin="5" Width="120" Content="Start chromosome length:"/>
+                        <TextBox Name="tbChromosomeStartLength" Margin="5" Width="50" Text="250" AcceptsReturn="True" />
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="110" Content="Iteration count:"/>
+                        <TextBox Name="tbIterationCount" Margin="5" Width="50" Text="100000"/>
+                        <Label Margin="5"  Width="120" Content="rand. selection ratio:" />
+                        <TextBox Name="tbRandomSelectionRatio" Margin="5" Width="50" Text="0.0"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="110" Content="Mutation ratio:"/>
+                        <TextBox Name="tbMutationRatio" Margin="5" Width="50" Text=""/>
+                        <Label Margin="5" Width="120" Content="Crossing ratio:" />
+                        <TextBox Name="tbCrossingRation" Margin="5" Width="50" Text="0.5"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="160" Content="Active gen mutation: factor:"/>
+                        <TextBox Name="tbActiveGenMutationFactor" Margin="5" Width="50" Text="0.1"/>
+                        <Label Margin="5" Width="40" Content="kind:" />
+                        <ComboBox Name="comboBox_activeGenMutationKind"  Margin="5" Width="70" SelectedIndex="1">
+                            <ComboBoxItem Content="Bit"/>
+                            <ComboBoxItem Content="Byte"/>
+                            <ComboBoxItem Content="AllBytes"/>
+                        </ComboBox>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5" Width="160" Content="Passive gen mutation: factor:"/>
+                        <TextBox Name="tbPassiveGenMutationFactor" Margin="5" Width="50" Text="0.5"/>
+                        <Label Margin="5" Width="40" Content="kind:" />
+                        <ComboBox Name="comboBox_passiveGenMutationKind"  Margin="5" Width="70" SelectedIndex="2">
+                            <ComboBoxItem Content="Bit"/>
+                            <ComboBoxItem Content="Byte"/>
+                            <ComboBoxItem Content="AllBytes"/>
+                        </ComboBox>
+                    </StackPanel>
+
+                </StackPanel>
+
+            </GroupBox>
+            <GroupBox Header="Fitness function:">
+
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal">
+                        <ComboBox Margin="5,5,5,5" Name="comboBox_FitnessFunctionType" Width="140" SelectedIndex="-1" SelectionChanged="comboBox_FitnessFunctionType_SelectionChanged">
+                            <ComboBoxItem Content="Topology sample" />
+                            <ComboBoxItem Content="Triangle mesh" />
+                            <ComboBoxItem Content="Quadric mesh" />
+                            <ComboBoxItem Content="Hexagon mesh" />
+                            <ComboBoxItem Content="Circle" />
+                            <!--<ComboBoxItem Content="Custom" />-->
+                        </ComboBox>
+                        <Label Margin="5,0,0,0" Content="shell wight:" ToolTip="if 0.0 - shell vertices exclude from fitnes, and if 1.0 - not"/>
+                        <TextBox Name="tbShellVertexWeight" Margin="5" Width="50" Text="0.5"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                        <Label Margin="5,0,0,0" Content="sample:" Width="56"/>
+                        <ComboBox Margin="5,5,5,5" Name="comboBox_Sample" SelectedIndex="-1"  Width="140" SelectionChanged="comboBox_Sample_SelectionChanged">
+                            <ComboBoxItem Content="Sample 1 (Tree)" />
+                            <ComboBoxItem Content="Sample 2 (Common case)" />
+                            <ComboBoxItem Content="Sample 3 (Common case)" />
+                            <ComboBoxItem Content="Ring-6" />
+                            <ComboBoxItem Content="Ring with leaves-6" />
+                            <ComboBoxItem Content="Triangle with trees-6" />
+                            <ComboBoxItem Content="Ring with thread-6" />
+                            <ComboBoxItem Content="Ring-8" />
+                            <ComboBoxItem Content="Thread-6" />
+                            <ComboBoxItem Content="Star-5" />
+                            <ComboBoxItem Content="Mesh-1 (quadric 3x3)" />
+                            <ComboBoxItem Content="Mesh-2 (quadric 9x1)" />
+                            <ComboBoxItem Content="Mesh-3 (quadric ring)" />
+                            <ComboBoxItem Content="Mesh-4 (quadric 4x2)" />
+                            <ComboBoxItem Content="Mesh-5 (quadric 4x4)" />
+                            <ComboBoxItem Content="Mesh-6 (quadric 6x6)" />
+                            <ComboBoxItem Content="Mesh-7" />
+                            <ComboBoxItem Content="Mesh-8" />
+                            <ComboBoxItem Content="Mesh-9" />
+                            <ComboBoxItem Content="Mesh-10 (triangle hexagon)"/>
+                            <ComboBoxItem Content="Mesh-11 (defected triangle)"/>
+                            <ComboBoxItem Content="Mesh-12 (two triangle)"/>
+                            <ComboBoxItem Content="Mesh-13 (defected mesh)"/>
+
+                        </ComboBox>
+                        <Label Margin="5" Content="Faset3 penalrty (%):"/>
+                        <TextBox Name="tbFaset3PenaltyProbability" Margin="4" Text="1" Width="30"/>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5,0,0,0" Content="GUCA iteration count:"/>
+                        <TextBox Name="tbGUCAIterationCount" Margin="5" Width="30" Text="150"/>
+
+                        <Label Margin="5,0,0,0" Content="Max vertex count"/>
+                        <TextBox Name="tbMaxVertexCount" Margin="5" Width="30" Text="200"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Margin="5,0,0,0" Content="2D-Unfold iteration count:"/>
+                        <TextBox Name="tbUnfoldingIterationCount" Margin="5" Width="30" Text="20"/>
+
+                        <Label Margin="5,0,0,0" Content="Transcription:"/>
+                        <ComboBox Name="cb_TranscriptionWay"  Margin="5" Width="90" SelectedIndex="1">
+                            <ComboBoxItem Content="Resettable"/>
+                            <ComboBoxItem Content="Continuable"/>                            
+                        </ComboBox>
+
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal">
+                        <CheckBox Name="cbGenomeLengthPenalty"  IsChecked="False" Margin="5">genome length penalty</CheckBox>
+                        <CheckBox Name="cbIsNotPlannedPenalty"  IsChecked="True" Margin="5">not planned penalty</CheckBox>
+                    </StackPanel>
+
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Control:">
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Margin="5" Name="btnStart" Content="Start" Width="80" IsEnabled="False" Click="btnStart_Click"></Button>
+                        <Button Margin="5" Name="btnCancel" Content="Reset" Width="80" IsEnabled="False" Click="btnCancel_Click"></Button>
+                        <Label Margin="5">MaxDegreeOfParallelism:</Label>
+                        <TextBox Margin="5" Name="tbMaxDegreeOfParallelism" Width="20" VerticalAlignment="Center">-1</TextBox>
+                    </StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition  Width="*" MinWidth="50"></ColumnDefinition>
+                            <ColumnDefinition  Width="*" MinWidth="50"></ColumnDefinition>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition></RowDefinition>
+                            <RowDefinition></RowDefinition>
+                            <RowDefinition></RowDefinition>
+                        </Grid.RowDefinitions>
+                        <Button Name="btnBrowseLoggingPath" Margin="5" Click="btnBrowseLoggingPath_Click">Browse logging path..</Button>
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <Label Margin="5">Repeats:</Label>
+                            <TextBox Margin="5" Name="tbExperimentsRepeatsCount" Width="20" VerticalAlignment="Center">5</TextBox>
+                        </StackPanel>
+                    </Grid>
+
+                </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Current iteration:" >
+                <StackPanel Orientation="Vertical">
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="iteration:"></Label>
+                        <Label Name="lbCurentIterationCount" Content="0"></Label>
+                        <Label Content="time (s):"></Label>
+                        <Label Name="lbIterationTime" Content="0" ContentStringFormat=""></Label>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="Best fitness:" FontWeight="Bold"></Label>
+                        <Label Name="lbBestFitnessValue" Content="" FontWeight="Bold"  ClipToBounds="True"></Label>
+                        <Label Name="lbFitnessAvgValue" Content="" ClipToBounds="True"></Label>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="chromosome length:"></Label>
+                        <Label Name="lbChromosomeMinMaxAvgLength" Content=""></Label>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <Label Content="Active gens count:"></Label>
+                        <Label Name="lbActiveGensInfo" Content=""></Label>
+                    </StackPanel>
+                    <Label Name="lbBestChromosomeInfo" Content="Age:"></Label>
+
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Header="Best instance:" >
+                <StackPanel Orientation="Vertical">
+                    <Label Margin="5,5,0,0"  Content="Population stats:"/>
+                    <ScrollViewer Margin="5" Height="80" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                        <TextBlock Name="textResult" Text="" Height="77" />
+                    </ScrollViewer>
+
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition  Width="*" MinWidth="30"></ColumnDefinition>
+                            <ColumnDefinition  Width="*" MinWidth="30"></ColumnDefinition>
+                            <ColumnDefinition  Width="*" MinWidth="30"></ColumnDefinition>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition></RowDefinition>
+                            <RowDefinition></RowDefinition>
+                            <RowDefinition></RowDefinition>
+                        </Grid.RowDefinitions>
+                        <Button Name="btnSaveChangeTable" Margin="5" ToolTip="Save gen (change table) to file" Click="btnSaveChangeTable_Click">Save "gen code"..</Button>
+                        <Button Name="btnLoadChangeTable"  Grid.Column="1"  Margin="5" ToolTip="Load gen (change table) from file" Click="btnLoadChangeTable_Click">Load "gen code"..</Button>
+                        <Button Name="btnArrangeActiveGens"  Grid.Column="2"  Margin="5" ToolTip="Arrange active gens" Click="btnArrangeActiveGens_Click">Arrange Active Gens</Button>
+                    </Grid>
+
+                </StackPanel>
+            </GroupBox>
+
+        </StackPanel>
+        <!-- Bottom panel: display controls -->
+        <StackPanel Grid.Row="1" Orientation="Vertical">
+            <GroupBox Header="View Control" >
+                <StackPanel>
+
+                    <Grid Height="Auto"  HorizontalAlignment="Stretch" Opacity="0.7">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="18*" />
+                            <ColumnDefinition Width="18*" />
+                            <ColumnDefinition Width="50*" />
+                        </Grid.ColumnDefinitions>
+                        <Button  Grid.Column="0" Margin="3" Height="23" Name="btnScaleIn" Click="btnScaleIn_Click">
+                            <TextBlock Text="Scale In"></TextBlock>
+                        </Button>
+                        <Button Grid.Column="1" Margin="3" Height="23" Name="btnScaleOut" IsEnabled="True" Click="btnScaleOut_Click">
+                            Scale Out
+                        </Button>
+                        <!--<CheckBox  VerticalAlignment="Center" Grid.Column="2" Name="cb_ViewControl_DisplayVertexState" IsChecked="True" Checked="cb_ViewControl_DisplayVertexState_Checked" Unchecked="cb_ViewControl_DisplayVertexState_Unchecked">Display vertex state value</CheckBox>-->
+                        <ComboBox Name="combo_ViewOptions" Grid.Column="2" SelectedIndex="1" SelectionChanged="combo_ViewOptions_SelectionChanged">
+                            <ComboBoxItem Content ="Display nothing"/>
+                            <ComboBoxItem Content ="Display Vertices"/>
+                            <ComboBoxItem Content ="Display Edges"/>
+                            <ComboBoxItem Content ="Display Edges and Vertices"/>
+                            <ComboBoxItem Content ="Display Edges and Vertices with state"/>
+                        </ComboBox>
+                    </Grid>
+
+                </StackPanel>
+
+            </GroupBox>
+            <GroupBox Header="Graph properties:" VerticalAlignment="Stretch">
+                <StackPanel Orientation="Vertical" VerticalAlignment="Stretch">
+                    <Button Margin="5" Name="btnDisplayGraphProperties" Content="Display graph properties" IsEnabled="False" Click="btnDisplayGraphProperties_Click"></Button>
+                    <TextBlock Margin="5" Name="textBlock_PlanarStatistics" Text="Planar statistics:"></TextBlock>
+                    <ScrollViewer Margin="5" Height="180" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" >
+                        <TextBlock Name="textPlanarStatistics" Text="" />
+                    </ScrollViewer>
+                </StackPanel>
+            </GroupBox>
+
+        </StackPanel>
+        <!-- Status bar -->
+        <StackPanel Name="stackPanle_Status" Orientation="Horizontal" Grid.ColumnSpan="2" Grid.Row="1" Background="Silver" Margin="0,329,0,1" Grid.RowSpan="2">
+            <Label Name="lbStatus"></Label>
+        </StackPanel>
+
+    </Grid>
+</Window>
