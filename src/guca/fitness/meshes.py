@@ -16,9 +16,9 @@ Hash = Hashable
 class MeshWeights:
     """Weights for mesh scoring."""
     w_face: float = 1.0
-    w_deg: float = 0.6
+    w_deg: float = 1.0
     w_shell: float = 0.4
-    w_nontarget: float = 0.5
+    w_nontarget: float = 0.01
     # Anti-plateau signals
     w_internal: float = 0.30        # reward for interior-edge ratio
     w_size: float = 0.20            # reward for saturating interior-face count
@@ -29,6 +29,69 @@ class MeshWeights:
     #      Example for HexMesh: {3: 0.8} to penalize triangles; {4: 0.2} to also discourage quads.
     w_forbidden_faces: Dict[int, float] = field(default_factory=dict)
     genome_len_bonus: bool = False
+    no_edge_score: float = 0.0       # if G has 0 edges -> exact 0.0
+    disconnected_mul: float = 0.05   # strong down-weight if G is disconnected
+    forest_ceiling: float = 1.19     # hard cap for acyclic (forest) graphs    
+    cycle_floor: float = 1.21     # keep for backward-compat (used as a baseline)
+    cycle_eps: float = 1e-3       # NEW: preserves ordering among cyclic graphs    
+    forest_cap_min: float = 1.05      # cap for tiny trees (e.g., 2 nodes, 1 edge)
+    forest_cap_ref_n: int = 12        # nodes at which forest cap ~ forest_ceiling
+    cycle_gap: float = 0.001          # keep forests strictly below cycles
+    forest_size_bonus: float = 0.08   # small upward drift for bigger trees
+    forest_size_ref_n: int = 12       # nodes at which size bonus ~ forest_size_bonus
+
+
+def _connectivity_cycle_gates(G: nx.Graph, raw_score: float, w: MeshWeights) -> float:
+    """
+    Enforce:
+      - 0 edges -> 0.0
+      - disconnected -> heavy multiplicative penalty
+      - cycles outrank forests
+    and allow trees (forests) a small monotone growth with size,
+    yet still < any cyclic graph.
+    """
+    m = G.number_of_edges()
+    if m == 0:
+        return float(w.no_edge_score)
+
+    n = G.number_of_nodes()
+    c = nx.number_connected_components(G)
+    mu = m - n + c  # cyclomatic number on ORIGINAL graph
+
+    s = float(raw_score)
+    if c > 1:  # penalize any disconnection strongly
+        s *= float(w.disconnected_mul)
+
+    # Cyclic graphs: keep ordering and strictly above any forest
+    if mu > 0:
+        baseline = max(float(w.forest_ceiling), float(w.cycle_floor))
+        if s < baseline:
+            # lift above baseline and preserve differences among cyclic graphs
+            return baseline + float(w.cycle_eps) * max(s, 0.0)
+        return s
+
+    # Forests (acyclic): add a small size bonus and cap by a dynamic ceiling
+    # size factor in [0,1] based on node count (n=2 -> 0, grows to 1 by ~forest_cap_ref_n)
+    refn = max(1, int(getattr(w, "forest_cap_ref_n", 12)))
+    size_factor = min(1.0, max(0.0, (n - 2) / refn))
+
+    # forest growth bonus (applied only once component penalty applied)
+    refb = max(1, int(getattr(w, "forest_size_ref_n", 12)))
+    bonus_factor = min(1.0, max(0.0, (n - 2) / refb))
+    s += float(getattr(w, "forest_size_bonus", 0.0)) * bonus_factor
+
+    # dynamic cap rises with size but stays strictly below cycles
+    cap_min = float(getattr(w, "forest_cap_min", 1.05))
+    cap_max = float(getattr(w, "forest_ceiling", 1.19))
+    cap = cap_min + (cap_max - cap_min) * size_factor
+    cap = min(cap, float(getattr(w, "cycle_floor", 1.21)) - float(getattr(w, "cycle_gap", 0.001)))
+
+    return min(s, cap)
+
+
+
+
+
 
 
 class _MeshBase(PlanarBasic):
@@ -116,7 +179,9 @@ class _MeshBase(PlanarBasic):
             + presence_bonus
             + gl_bonus
         )
-        return float(score)
+        
+        final = _connectivity_cycle_gates(G, score, self.weights)  # use ORIGINAL G here
+        return float(final)
 
 
 def _edge_set(G: nx.Graph) -> set[Tuple[Hash, Hash]]:

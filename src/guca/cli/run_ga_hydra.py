@@ -1,6 +1,8 @@
 # src/guca/cli/run_ga_hydra.py
 from __future__ import annotations
-from pathlib import Path
+import json
+from pathlib import Path  # if not already present
+
 
 import hydra
 from hydra.utils import instantiate
@@ -34,8 +36,25 @@ def main(cfg: DictConfig) -> None:
         run_dir=run_dir,  # <<< ensure checkpoints go under the Hydra dir
     )
 
-    # (Optional) echo resolved config at the end
-    print(OmegaConf.to_yaml(cfg, resolve=True))
+    # Try to obtain graph summary directly from the GA return, else from last.json
+    gsum = summary.get("graph_summary")
+    if gsum is None:
+        last_path = (summary.get("checkpoints") or {}).get("last")
+        try:
+            if last_path and Path(last_path).exists():
+                with open(last_path, "r", encoding="utf-8") as f:
+                    gsum = (json.load(f) or {}).get("graph_summary")
+        except Exception:
+            gsum = None
+
+    result = {
+        "best_fitness": summary.get("best_fitness"),
+        "best_length": summary.get("best_length"),
+        "graph_summary": gsum,
+        "checkpoints": summary.get("checkpoints"),
+    }
+    print(json.dumps(result, indent=2))
+
     print("GA summary:", summary)
 
 if __name__ == "__main__":

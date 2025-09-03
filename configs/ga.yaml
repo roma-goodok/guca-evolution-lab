@@ -62,6 +62,15 @@ fitness:
   _target_: guca.fitness.meshes.TriangleMesh
   weights:
     _target_: guca.fitness.meshes.MeshWeights
+    # w_face: 0.2
+    # w_deg: 0.2
+    # w_shell: 0.4
+    # w_nontarget: 0.5
+    # w_internal: 0.30
+    # w_size: 0.20
+    # size_cap: 10
+    # target_presence_bonus: 1.6
+    #w_forbidden_faces: {6: 0.8}
 
 # # Mesh: Quad
 # fitness:
@@ -93,8 +102,8 @@ ga:
   # Core GA parameters
   pop_size: 40
   generations: 20
-  cx_pb: 0.70
-  mut_pb: 0.30
+  cx_pb: 1.0
+  mut_pb: 1.0
   tournament_k: 3
   elitism: 2
 
