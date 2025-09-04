@@ -98,6 +98,26 @@ fitness:
 # -------- GA runner (toolbox+loop wired internally) --------
 ga:
   _target_: guca.ga.experiment.GAExperiment
+  
+
+  selection_method: elite           # elite | rank | roulette | tournament
+  random_selection_ratio: 0.0       # e.g. 0.05 for 5% pure random
+
+  active:                           # legacy: active byte, p=0.10, +rotate 0.02
+    factor: 0.10
+    kind: byte
+    rotate_extra_pb: 0.20
+
+  passive:                          # legacy: passive allbytes, p=0.50, +rotate 0.10
+    factor: 0.50
+    kind: allbytes
+    rotate_extra_pb: 0.20
+
+  structuralx:
+    insert_active_pb: 0.10
+    remove_inactive_pb: 0.10
+    remove_inactive_min_len: 100
+    duplicate_head_pb: 0.20
 
   # Core GA parameters
   pop_size: 40
