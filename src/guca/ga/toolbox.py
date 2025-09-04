@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Set
 from collections import Counter
 
+
 import random
 
 import networkx as nx
@@ -74,52 +75,16 @@ def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth
 
 def _apply_rules_once(
     G: nx.Graph,
-    rules_with_idx: List[Tuple[int, Rule]],   # (orig_gene_idx, Rule)
+    rules: List[Rule],
     *,
     machine_cfg: Dict[str, Any],
-    active_hits: Set[int],                    # collect indices of fired rules
-) -> bool:
-    # ... unpack machine params as before ...
-
-    changed = False
-    # ... (same local accumulators)
-
-    # deterministic iteration
-    for u in sorted(G.nodes()):
-        cur_sid = int(G.nodes[u]["state_id"])
-        # pick first matching rule by cond_current
-        chosen: Optional[Tuple[int, Rule]] = next(
-            ((i, r) for (i, r) in rules_with_idx if r.cond_current == cur_sid),
-            None
-        )
-        if chosen is None:
-            continue
-        rule_idx, rule = chosen
-        op = rule.op_kind
-        operand_sid = rule.operand if rule.operand is not None else None
-
-        # --- mark rule as "active" this step ---
-        active_hits.add(int(rule_idx))
-
-        # --- same operation cases as before ---
-        # (TurnToState / GiveBirth / GiveBirthConnected / TryToConnectWith /
-        #  TryToConnectWithNearest / DisconnectFrom / Die)
-        # ... unchanged body creating to_add_* and to_remove_* ...
-
-    # ... apply removals/additions/updates exactly as before ...
-    return changed
-
-
-
-def _apply_rules_once(
-    G: nx.Graph,
-    rules_with_idx: List[Tuple[int, Rule]],   # (orig_gene_idx, Rule)
-    *,
-    machine_cfg: Dict[str, Any],
-    active_hits: Set[int],                    # collect indices of fired rules
+    active_hits: Optional[List[bool]] = None,
+    rid_by_cond: Optional[Dict[int, int]] = None,
 ) -> bool:
     """
     Apply rules to all nodes in a deterministic order; return True if any change occurred.
+    If 'active_hits' is provided, mark rules that EFFECTED a change at least once in this step.
+    Rule selection is by the first rule for a given cond_current (rid_by_cond).
     """
     # Unpack machine params
     max_vertices = int(machine_cfg.get("max_vertices", 0) or 0)
@@ -134,69 +99,87 @@ def _apply_rules_once(
     to_remove_edges: List[Tuple[int, int]] = []
     to_remove_nodes: List[int] = []
     state_updates: List[Tuple[int, int]] = []
-       
 
-    # deterministic iteration
     for u in sorted(G.nodes()):
         cur_sid = int(G.nodes[u]["state_id"])
-        # pick first matching rule by cond_current
-        chosen: Optional[Tuple[int, Rule]] = next(
-            ((i, r) for (i, r) in rules_with_idx if r.cond_current == cur_sid),
-            None
-        )
-        if chosen is None:
+
+        # pick first matching rule by cond_current via table index
+        rid = None
+        if rid_by_cond is not None:
+            rid = rid_by_cond.get(cur_sid)
+        if rid is None:
+            # fallback to linear search (should not happen if rid_by_cond is provided)
+            rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
+        if rid is None:
             continue
-        rule_idx, rule = chosen
+
+        rule = rules[rid]
         op = rule.op_kind
         operand_sid = rule.operand if rule.operand is not None else None
-        # --- mark rule as "active" this step ---
-        active_hits.add(int(rule_idx))
+
+        rule_effective = False
 
         if op == OpKind.TurnToState:
             if operand_sid is not None and operand_sid != cur_sid:
-                state_updates.append((u, operand_sid))
+                state_updates.append((u, int(operand_sid)))
+                rule_effective = True
 
         elif op == OpKind.GiveBirth:
-            # create a node but don't connect
             if operand_sid is not None:
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, operand_sid))
+                to_add_nodes.append((new_id, int(operand_sid)))
+                rule_effective = True
 
         elif op == OpKind.GiveBirthConnected:
             if operand_sid is not None:
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, operand_sid))
+                to_add_nodes.append((new_id, int(operand_sid)))
                 to_add_edges.append((u, new_id))
+                rule_effective = True
 
         elif op == OpKind.TryToConnectWith:
             if operand_sid is not None:
-                # connect to ALL nodes that have operand state and are not already neighbors
                 targets = [v for v in G.nodes()
-                           if v != u and G.nodes[v].get("state_id") == operand_sid and not G.has_edge(u, v)]
-                for v in targets:
-                    to_add_edges.append((u, v))
+                           if v != u and G.nodes[v].get("state_id") == int(operand_sid) and not G.has_edge(u, v)]
+                if targets:
+                    for v in targets:
+                        to_add_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.TryToConnectWithNearest:
             if operand_sid is not None:
-                cands = _nearest_candidates(G, u, operand_sid, max_depth=max_depth, tie_breaker=tie_breaker, connect_all=connect_all)
-                for v in cands:
-                    if not G.has_edge(u, v):
+                cands = _nearest_candidates(G, u, int(operand_sid),
+                                            max_depth=max_depth,
+                                            tie_breaker=tie_breaker,
+                                            connect_all=connect_all)
+                cands = [v for v in cands if not G.has_edge(u, v)]
+                if cands:
+                    for v in cands:
                         to_add_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.DisconnectFrom:
             if operand_sid is not None:
-                targets = [v for v in list(G.neighbors(u)) if G.nodes[v].get("state_id") == operand_sid]
-                for v in targets:
-                    to_remove_edges.append((u, v))
+                targets = [v for v in list(G.neighbors(u)) if G.nodes[v].get("state_id") == int(operand_sid)]
+                if targets:
+                    for v in targets:
+                        to_remove_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.Die:
             to_remove_nodes.append(u)
+            rule_effective = True
+
+        # if this rule created any concrete change requests, mark as active
+        if rule_effective and active_hits is not None and 0 <= rid < len(active_hits):
+            active_hits[rid] = True
 
     # apply removals first
     for (u, v) in to_remove_edges:
         if G.has_edge(u, v):
             G.remove_edge(u, v)
             changed = True
+
     if to_remove_nodes:
         for u in sorted(set(to_remove_nodes), reverse=True):
             if G.has_node(u):
@@ -219,12 +202,12 @@ def _apply_rules_once(
 
     # update states
     for (u, sid) in state_updates:
-        if G.has_node(u):
-            if int(G.nodes[u]["state_id"]) != int(sid):
-                G.nodes[u]["state_id"] = int(sid)
-                changed = True
+        if G.has_node(u) and int(G.nodes[u]["state_id"]) != int(sid):
+            G.nodes[u]["state_id"] = int(sid)
+            changed = True
 
     return changed
+
 
 
 def _rank_weights(n: int) -> List[float]:
@@ -248,9 +231,14 @@ def simulate_genome(
     *,
     states: List[str],
     machine_cfg: Dict[str, Any],
-    return_activity: bool = False,
+    collect_activity: bool = False,
 ) -> nx.Graph | Tuple[nx.Graph, List[bool]]:
-
+    """
+    Minimal in-process simulator for GA evaluation.
+    Starts from one node with start_state unless an init graph is provided by the caller.
+    If collect_activity=True, also returns a boolean list mark of rules that EFFECTED changes.
+    """
+    # initial graph: single node with start_state
     start_label = str(machine_cfg.get("start_state", "A"))
     _, inv = labels_to_state_maps(states)
     try:
@@ -261,29 +249,37 @@ def simulate_genome(
     G = nx.Graph()
     G.add_node(0, state_id=int(start_sid))
 
-    decoded = [decode_gene(g, state_count=len(states)) for g in genes]
-    # keep original indices so "active" can map back to genome order
-    rules_with_idx = list(enumerate(decoded))
-    # sort by (cond_current, op_kind, orig_idx) for stable priority
-    rules_with_idx.sort(key=lambda t: (int(t[1].cond_current), int(t[1].op_kind), int(t[0])))
+    # decode rules and stabilize priority (first rule per cond_current)
+    rules = [decode_gene(g, state_count=len(states)) for g in genes]
+    rules.sort(key=lambda r: (int(r.cond_current), int(r.op_kind)))
+
+    # build "first rule by condition" map
+    rid_by_cond: Dict[int, int] = {}
+    for i, r in enumerate(rules):
+        cur = int(r.cond_current)
+        if cur not in rid_by_cond:
+            rid_by_cond[cur] = i
+
+    active_hits: Optional[List[bool]] = [False] * len(rules) if collect_activity else None
 
     max_steps = int(machine_cfg.get("max_steps", 120))
-    active_hits: Set[int] = set()
-
     for _ in range(max_steps):
-        if not _apply_rules_once(G, rules_with_idx, machine_cfg=machine_cfg, active_hits=active_hits):
+        stepped = _apply_rules_once(
+            G,
+            rules,
+            machine_cfg=machine_cfg,
+            active_hits=active_hits,
+            rid_by_cond=rid_by_cond,
+        )
+        if not stepped:
             break
         if machine_cfg.get("max_vertices", 0) and G.number_of_nodes() >= int(machine_cfg["max_vertices"]):
             break
 
-    if not return_activity:
-        return G
+    if collect_activity:
+        return G, (active_hits or [])
+    return G
 
-    mask = [False] * len(genes)
-    for i in active_hits:
-        if 0 <= i < len(mask):
-            mask[i] = True
-    return G, mask
 
 
 
@@ -624,12 +620,19 @@ def evolve(
 
 
     def evaluate(individual: List[int]) -> Tuple[float]:
-        ret = simulate_genome(individual, states=states, machine_cfg=machine_cfg, return_activity=True)
-        G, mask = ret  # type: ignore
-        # attach mask for mutation to use later
-        setattr(individual, "active_mask", mask)
+        # simulate genome -> graph, also collect which rules truly effected changes
+        G, active_mask = simulate_genome(
+            individual,
+            states=states,
+            machine_cfg=machine_cfg,
+            collect_activity=True,
+        )
+        # stash mask on the individual for the next mutation call
+        setattr(individual, "active_mask", list(active_mask))
+        # score
         score = float(fitness.score(G))
         return (score,)
+
 
 
     toolbox.register("evaluate", evaluate)

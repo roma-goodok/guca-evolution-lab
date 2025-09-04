@@ -260,10 +260,32 @@ def make_mutate_fn(
             L = max_len
 
         # -------- Field-level mutations --------
+        # Per-gene regime depends on activity (if available)
+        active_mask = getattr(ind, "active_mask", None)
+
+        # unpack regimes with defaults
+        akind = str(active_cfg.get("kind", "byte")).lower()
+        afactor = float(active_cfg.get("factor", 0.10))
+        ashift = float(active_cfg.get("shift_pb", 0.02))
+
+        pkind = str(passive_cfg.get("kind", "all_bytes")).lower()
+        pfactor = float(passive_cfg.get("factor", 0.50))
+        pshift = float(passive_cfg.get("shift_pb", 0.10))
+
+        def apply_kind(x: int, kind: str) -> int:
+            if kind in ("bit", "bits", "bitflip"):
+                return mutate_bitflip(x, rng)
+            if kind in ("byte", "one_byte"):
+                return mutate_byte(x, rng)
+            if kind in ("all_bytes", "allbytes", "bytes"):
+                return mutate_allbytes(x, rng)
+            # default fallback
+            return mutate_byte(x, rng)
+
         for i in range(len(ind)):
             g = ind[i]
 
-            # low-level bit/byte ops
+            # low-level generic knobs (independent of activity)
             if bitflip_pb > 0.0 and rng.random() < bitflip_pb:
                 g = mutate_bitflip(g, rng)
             if byte_pb > 0.0 and rng.random() < byte_pb:
@@ -275,17 +297,20 @@ def make_mutate_fn(
             if enum_delta_pb > 0.0 and rng.random() < enum_delta_pb:
                 g = mutate_enum_delta(g, state_count=state_count, rng=rng)
 
-            # 'active' regime (applied uniformly as an extra gentle pass)
-            if active_factor > 0.0 and rng.random() < active_factor:
-                g = _apply_kind(g, kind=active_kind)
-            if active_shift > 0.0 and rng.random() < active_shift:
-                g = mutate_rotate(g, rng)
+            # C#-inspired regimes guided by "was active"
+            was_active = bool(active_mask[i]) if (isinstance(active_mask, list) and i < len(active_mask)) else False
+            if was_active:
+                if afactor > 0.0 and rng.random() < afactor:
+                    g = apply_kind(g, akind)
+                if ashift > 0.0 and rng.random() < ashift:
+                    g = mutate_rotate(g, rng)
+            else:
+                if pfactor > 0.0 and rng.random() < pfactor:
+                    g = apply_kind(g, pkind)
+                if pshift > 0.0 and rng.random() < pshift:
+                    g = mutate_rotate(g, rng)
 
-            # 'passive' regime (uniform extra pass)
-            if passive_factor > 0.0 and rng.random() < passive_factor:
-                g = _apply_kind(g, kind=passive_kind)
-            if passive_shift > 0.0 and rng.random() < passive_shift:
-                g = mutate_rotate(g, rng)
+            #ind[i] = g
 
             # Final sanity: keep as 64-bit
             ind[i] = int(g) & _MASK64
