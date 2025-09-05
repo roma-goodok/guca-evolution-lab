@@ -1,153 +1,157 @@
-# M2 — Week 4 GA alignment plan (with C# reference)
+# M2 — Week 4 GA Alignment Plan (C# Parity) — **UPDATED**
 
-**Goal:** align our Python GA to the successful behavior observed in the legacy C# implementation so that the search can reliably grow mesh structures (triangles first, later quads & hex).
+**Goal:** Align the Python GA with the legacy C# behavior so evolution reliably grows mesh structures
+(starting with triangles, later quads & hex). This document captures the **key decisions**, **tasks**, **test
+coverage**, and **current status**.
 
-This document records **key decisions**, **implementation steps**, **tests**, and **acceptance criteria** for Week 4.
-
----
-
-## 1) Scope & decisions
-
-- **Gene format / rule shape**
-  - Adopt the full 64‑bit gene layout from the C# code (status, prior, conn\_GE/LE, parents\_GE/LE, op.kind, op.operand), and expose the **full condition** in YAML for best checkpoints.
-  - Keep our `Rule` structure but ensure it maps 1:1 to the C# fields.
-
-- **Crossover**
-  - Use **one‑cut per parent** (tail swap) like C#: pick `cp1` in parent A and `cp2` in parent B → child1 = `A[:cp1] + B[cp2:]`, child2 = `B[:cp2] + A[cp1:]`. Clamp by `max_len`. (Matches `GUMChromosome.Crossover`.)
-
-- **Mutation (active vs passive)**
-  - Implement **conditional mutation** driven by per‑gene activity flags (WasActive) collected during simulation:
-    - For **active genes**: mutate with `active_gen_mutation_factor` using `active_gen_mutation_kind`.
-    - For **passive genes**: mutate with `passive_gen_mutation_factor` using `passive_gen_mutation_kind`.
-    - Also include a small **byte‑rotate** (shift) chance for both, as in C# (×0.2 of the factor).
-  - Add **structural tweaks** echoing the legacy:
-    - With small probability, **duplicate the first gene** (if below `max_len`).
-    - With small probability, **insert near a random active gene** (if any and below `max_len`).
-    - With small probability, **delete a random inactive gene** (if long enough).
-
-- **Selection**
-  - Provide **ELITE / RANK / ROULETTE** strategies selectable via Hydra (`ga.selection.method`), plus `ga.selection.random_ratio` for injecting random picks — just like the UI. Default: **ELITE** + **tournament** for survivors, but allow swapping to **RANK** or **ROULETTE** easily.
-
-- **Fitness (Week 4 focus = TriangleMesh)**
-  - Keep our new **connectivity/cycle gating**: disconnected ⇒ ~0, trees ⇒ low plateau (~1.0..1.1), any cycle ⇒ jump above tree plateau.
-  - Ensure **triangle signal** dominates triangle‑like graphs: reward interior triangular faces, correct shell pressure, degree target (=6) for interior.
-  - Preserve **hex/quad knobs** but keep them out of scope for Week 4 fine‑tuning.
-
-- **Checkpoints & run UX**
-  - `best.yaml` includes **full rule condition** and a **graph summary**.
-  - `best.png` is rendered in‑process with the same renderer as `run_gum` (edges + colored nodes, controllable via knob).
-  - Progress bar shows **max, avg, len**. At the end print **best graph summary** (nodes/edges/state counts).
-
-
-> C# reference for crossover/mutation/fitness filters: `GUMChromosome` and `PlanarGraphFitnessFunction` family. See provided legacy sources in `docs/xx_legacy`.
-
+_Last update: 2025‑09‑05._
 
 ---
 
-## 2) Implementation steps (tasks)
+## ✅ Key decisions
 
-1. **Gene & rule parity**
-   - [ ] Confirm decoder/encoder map all 64‑bit fields (status, prior, conn\_GE/LE, parents\_GE/LE, op.kind, operand).
-   - [ ] When writing `best.yaml`, include the full condition block (already supported).
-
-2. **Simulator: activity tracking**
-   - [ ] While applying rules, **record which rule fired** for each step; mark those genes as **WasActive** for the evaluated genome.
-   - [ ] Return this activity mask to the GA loop (store on the individual temporarily during evaluation).
-
-3. **Mutation: active vs passive**
-   - [ ] In `operators.make_mutate_fn`, branch mutation parameters by **WasActive** flag.
-   - [ ] Add byte‑**rotate** sub‑mutation (×0.2 of factor) for both active & passive (per legacy).
-   - [ ] Implement structural tweaks: **duplicate‑first**, **insert‑near‑active**, **delete‑inactive** with small probabilities and length guards.
-
-4. **Crossover parity**
-   - [ ] Ensure our `splice_cx` behaves as **one‑cut per parent** tail swap, or add `legacy_tail_swap_cx` and switch to it by default.
-
-5. **Selection menu**
-   - [ ] Add `ga.selection.method: elite|rank|roulette` + `ga.selection.random_ratio`.
-   - [ ] Wire **tournament** to be used only if `method=elite` (or keep as internal survivor selector), and support alternative selectors via DEAP stock ops.
-
-6. **Fitness (TriangleMesh tune)**
-   - [ ] Keep connectivity/cycle gates; align triangle weights to prefer **interior triangles** and **degree=6**.
-   - [ ] Make sure trees can **grow slightly with size**, but **any cycle** still beats any tree.
-
-7. **Checkpoints & UX polish**
-   - [ ] Write `best.yaml` (or `.json`) + `last.json` + `pop_*.jsonl`; include **graph summary**.
-   - [ ] If `save_best_png: true`, write `checkpoints/best.png` (edges + colored nodes by default).
-
-8. **Hydra config**
-   - [ ] Add new keys: `ga.selection.method`, `ga.selection.random_ratio`, `ga.mutation.active.*`, `ga.mutation.passive.*`, switches for CX variant, and renderer flags.
-   - [ ] Keep experiment block: `experiment.name`, `description`, `inherits` with `${oc.env:ML_LOGBOOK_DIR}` pathing.
-
-9. **Parallel evaluation**
-   - [ ] (Already supported) Confirm pool is applied to **fitness eval** only; mutation/crossover remain in‑process.
-
+- **Gene ↔ Rule parity:** keep our 64‑bit gene layout compatible with the C# `GumGen` fields (status, prior,
+  conn_GE/LE, parents_GE/LE, op.kind, operand). Best checkpoints **export full condition** in YAML.
+- **Crossover parity:** default to **tail‑swap** (one cut per parent, swap tails), clamped by `max_len`.
+- **Mutation split (active vs passive):** use per‑gene **WasActive** mask from simulator. Active and passive
+  regimes use different mutation kinds + probabilities; each gets a small rotate (“shift”) chance.
+- **Selection menu:** support **elite**, **rank**, **roulette**; optional random injection. Hydra‑configurable.
+- **Fitness shaping (TriangleMesh focus):** disconnected graphs → ~0; trees live on a low, slightly rising
+  plateau; **any cycle** strictly beats any tree. Mesh‑specific metrics kept (faces/degree/shell/etc.).
+- **Checkpoints & UX:** `best.yaml` has full rule condition and a **graph summary**; optional `best.png`
+  rendered with the same code path as `run_gum` (edges + colored nodes unless configured otherwise).
+- **Hydra integration:** `_target_` instantiation for fitness and GA; experiment naming & run dirs via env‑based
+  logbook path; parallel evaluation via `n_workers`.
 
 ---
 
-## 3) Tests (pytest)
+## 📋 Task list & status
 
-- **Crossover parity**
-  - [ ] With two known parents, assert children equal legacy tail‑swap construction; lengths respect `max_len`.
-- **Active vs passive mutation**
-  - [ ] Craft a genome where some rules certainly fire; check higher mutation rate / different kind for **active** vs **passive** slices.
-- **Structural tweaks**
-  - [ ] Probabilistic tests with seeded RNG: when probabilities set to 1.0, duplicate/insert/delete effects occur as specified.
-- **Selection strategies**
-  - [ ] Rank and roulette produce distributions consistent with expectations on synthetic fitness arrays; `random_ratio` injects uniform randomness.
-- **Triangle fitness trend**
-  - [ ] Disconnected ⇒ ~0; single edge ⇒ low (~1.0); larger trees slightly higher; any single cycle ⇒ strictly greater than any tree (sanity scripts already cover this trend).
-- **Checkpoint content**
-  - [ ] `best.yaml` contains full condition; `best.png` exists when knob is on; both include graph summary.
+### 1) Gene & rule parity
+- [x] Ensure encoder/decoder map the 64‑bit fields 1:1 with C#.
+- [x] Export **full** `condition` in `best.yaml` (including prior/conn/parents bounds).
+- [x] Keep human‑readable operand/state labels.  
 
+**Tests:** covered via checkpoint content checks.
 
 ---
 
-## 4) Risks & caveats
+### 2) Simulator: activity tracking
+- [x] While applying rules, mark the firing gene(s) as **WasActive** for that evaluation.
+- [x] Surface the **activity mask** to the GA loop (stored on the individual for mutation).
 
-- **Saved vs current state** semantics in neighbor‑search: keep using **saved state** to match legacy behavior for `TryToConnectWith` and “nearest” rules.
-- **BFS tie‑breakers**: ensure deterministic `stable` order to improve reproducibility.
-- **Plateaus**: even with better fitness shaping, evolution may stall if initial genomes can only create trees; keeping cycle bonus and hex/quad penalties consistent helps escape.
-- **Performance**: activity tracking and PNG rendering are off the hot path; parallel eval mitigates added cost.
-
+**Tests:** `test_simulate_sets_mask.py` & `test_activity_mask_influence.py`.
 
 ---
 
-## 5) Effort estimate
+### 3) Mutation: active vs passive (+ structural extras)
+- [x] Split by **WasActive**: `active_cfg` vs `passive_cfg` (factor, kind, optional rotate/shift).
+- [x] Structural extras: **duplicate‑head**, **insert‑near‑active**, **delete‑inactive** (guarded by length).
+- [x] Keep legacy low‑level ops: bitflip / byte / allbytes / rotate; add **enum‑delta** safety.
+- [x] Post‑mutate safety: clamp to 64‑bit; if gene becomes undecodable → **re‑randomize**.
 
-Assuming ~2–3 h/day on weekdays & 6–10 h on weekend:
-
-- Core parity (decoder/encoder, activity tracking, mutation split, CX parity): **1.5–2 days**
-- Selection strategies & Hydra wiring: **0.5 day**
-- Fitness tune (triangle) & tests: **0.5–1 day**
-- Checkpoints/UX polish & docs: **0.5 day**
-
-**Total:** ~**3–4 days** of focused work.
+**Tests:** `test_operators.py::test_mutate_fn_keeps_domain_and_bounds`, activity‑guided mutation test.
 
 ---
 
-## 6) Hydra knobs (sketch)
+### 4) Crossover parity
+- [x] Tail‑swap variant implemented and selectable; used by default.
+- [x] Length clamped by `max_len` for both children; preserves list type.
 
+**Tests:** child shape & length checks against a reference construction.
+
+---
+
+### 5) Selection strategies
+- [x] Hydra knob: `ga.selection.method: elite|rank|roulette` + `ga.selection.random_ratio`.
+- [x] Rank/roulette implemented with reproducible RNG; elite keeps top‑K; tournament kept for back‑compat.
+
+**Tests:** distribution sanity on synthetic fitness arrays; deterministic behavior under fixed seeds.
+
+---
+
+### 6) Fitness (TriangleMesh tune)
+- [x] Connectivity & cycle **gates**: disconnected → ~0; small forests very low; trees form a mild plateau;
+      first cycle jumps above the plateau.
+- [x] Triangle mesh signals: interior triangular faces, interior degree≈6, shell compactness, size bonus
+      (saturating), and forbidden‑faces penalties (configurable).
+- [x] Trees: allow **slight growth** with size (but always below any cyclic graph).
+
+**Tests:** `tests/test_fitness_meshes.py` and sanity script trends.
+
+---
+
+### 7) Checkpoints & run UX
+- [x] `best.yaml` or `best.json` (per `fmt`) + `last.json` + `pop_*.jsonl`.
+- [x] **Graph summary** embedded (nodes/edges/states).  
+- [x] `save_best_png: true` renders `checkpoints/best.png` using the **run_gum** renderer.
+- [x] TQDM progress bar; dynamic postfix: **max**, **avg**, **len**.
+- [x] Start banner (experiment name in green, logbook path); end prints best graph summary.
+
+**Tests:** smoke test `test_toolbox_smoke.py` verifies files & fields existence.
+
+---
+
+### 8) Hydra config
+- [x] `_target_` for fitness and GA experiment classes.
+- [x] `ga.selection.*`, `ga.cx.variant`, `ga.mutation.active/*` & `passive/*`, `ga.checkpoint.save_best_png` added.
+- [x] Logbook path via `${oc.env:ML_LOGBOOK_DIR}/…` and experiment name; run dirs under Hydra’s `${now:…}`.
+
+**Config snippet (illustrative):**
 ```yaml
 ga:
   selection:
-    method: elite   # elite | rank | roulette
+    method: rank      # elite | rank | roulette
     random_ratio: 0.0
   cx:
-    variant: tail_swap   # tail_swap | splice
+    variant: tail_swap  # tail_swap | splice
   mutation:
-    active:
-      factor: 0.10
-      kind: byte        # bit | byte | all_bytes
-      rotate_factor: 0.02  # optional (applied as extra rotate chance)
-    passive:
-      factor: 0.50
-      kind: all_bytes
-      rotate_factor: 0.10
+    active:  { factor: 0.10, kind: byte,     rotate_factor: 0.02 }
+    passive: { factor: 0.50, kind: all_bytes, rotate_factor: 0.10 }
+  checkpoint:
+    save_best: true
+    save_last: true
+    save_every: 5
+    save_population: best  # best | all
+    fmt: yaml              # yaml | json
+    save_best_png: true
+    out_dir: checkpoints
 ```
 
 ---
 
-## 7) References
+### 9) Parallel evaluation
+- [x] `n_workers > 0` enables a process pool for **fitness evaluation only** (safe & deterministic).
 
-- Legacy crossover/mutation and fitness gate logic — **C#**: `GUMChromosome` & `PlanarGraphFitnessFunction` family (docs/xx_legacy).  
-- Current Hydra config & CLI docs — `config.yaml`, `docs/how-to/cli_run_gum.md`, `docs/reference/genome_yaml_spec.md`.
+**Tests:** manual run sanity under `n_workers=8` + smoke test still green.
+
+---
+
+## 🧪 Test inventory (Week 4)
+
+- `tests/ga/test_operators.py` — field/structural mutation bounds & safety.
+- `tests/ga/test_simulate_sets_mask.py` — simulator returns activity mask.
+- `tests/ga/test_activity_mask_influence.py` — active vs passive mutation bias.
+- `tests/ga/test_toolbox_smoke.py` — GA loop runs; checkpoints, PNG/summary written when enabled.
+- `tests/test_fitness_meshes.py` — triangle mesh monotonicity and forbidden‑faces penalties.
+- (Sanity scripts under `tools/` for quick manual trend checks.)
+
+_All tests pass under fixed RNG seeds._
+
+---
+
+## ⚠️ Remaining items / next wave (Week 5+)
+
+- **Full condition semantics in the engine:** make all predicate fields effective
+  (prior state, conn_GE/LE, parents_GE/LE) in rule matching during simulation.
+- **Quad/Hex fitness tuning:** revisit weights and forbidden‑faces for stronger signal vs triangles.
+- **Experiment sweeps:** Hydra‑based grids for (selection × cx × mutation) sensitivity; export plots.
+- **Optional:** record per‑generation best PNGs (`epoch_*.png`) when `save_every > 0` for visual progress.
+
+---
+
+## 📎 Notes & references
+
+- Legacy reference: `docs/xx_legacy/` (C# `GUMChromosome`, `PlanarGraphFitnessFunction*`).
+- Current CLI & renderer: `guca.cli.run_gum` (same visuals used by GA PNG checkpoints).
+- YAML spec: `docs/reference/genome_yaml_spec.md`.

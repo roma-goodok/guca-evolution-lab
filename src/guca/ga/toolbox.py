@@ -225,6 +225,68 @@ def _roulette_weights(fits: List[float]) -> List[float]:
     return [x/s for x in raw]
 
 
+# --- Selection helpers --------------------------------------------------------
+from typing import Callable
+
+def _sel_rank(pop, k: int, rng: random.Random, random_ratio: float = 0.0):
+    """
+    Linear rank selection (higher fitness -> higher rank).
+    Mix in a small fraction of uniform random picks if random_ratio > 0.
+    Sampling is with replacement.
+    """
+    if k <= 0:
+        return []
+
+    # Sort by descending fitness
+    sorted_pop = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
+    n = len(sorted_pop)
+    if n == 0:
+        return []
+
+    # ranks: n..1 (linear)
+    ranks = list(range(n, 0, -1))
+    total = sum(ranks)
+    probs = [r / total for r in ranks]
+
+    k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+    k_rand = max(0, k - k_rank)
+
+    selected = []
+    if k_rank > 0:
+        # rng.choices is deterministic under seeded rng
+        selected.extend(rng.choices(sorted_pop, weights=probs, k=k_rank))
+    if k_rand > 0:
+        selected.extend(rng.choices(pop, k=k_rand))
+    return selected
+
+
+def _make_selector(method: str, tournament_k: int, random_ratio: float, rng: random.Random) -> Callable:
+    """
+    Return a selection function sel(pop, k) based on GA config.
+    """
+    m = (method or "rank").lower()
+    if m == "rank":
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+    elif m == "tournament":
+        # keep DEAP tournament
+        return lambda pop, k: tools.selTournament(pop, k=k, tournsize=max(2, int(tournament_k)))
+    elif m == "roulette":
+        # roulette on raw fitness (DEAP)
+        # optional mixing with random picks if random_ratio > 0
+        def _roulette(pop, k):
+            k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+            k_rand = max(0, k - k_rank)
+            part = tools.selRoulette(pop, k=k_rank) if k_rank > 0 else []
+            if k_rand > 0:
+                part.extend(rng.choices(pop, k=k_rand))
+            return part
+        return _roulette
+    else:
+        # fallback = rank
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+
+
+
 
 def simulate_genome(
     genes: List[int],
@@ -556,6 +618,7 @@ def evolve(
     max_len = int(ga_cfg.get("max_len", 64))
     init_len = int(ga_cfg.get("init_len", 6))
 
+
     # DEAP setup
     try:
         creator.FitnessMax  # type: ignore[attr-defined]
@@ -616,8 +679,16 @@ def evolve(
     )
 
     toolbox.register("mutate", mutate)
-    toolbox.register("select", tools.selTournament, tournsize=int(ga_cfg.get("tournament_k", 3)))
 
+    # selection policy (C# alignment default = rank)
+    sel_cfg = ga_cfg.get("selection", {}) or {}
+    selection_method = str(sel_cfg.get("method", "rank"))
+    random_ratio = float(sel_cfg.get("random_ratio", 0.0))
+
+    # Build and register selector into toolbox
+    selector_fn = _make_selector(selection_method, tournament_k=int(ga_cfg.get("tournament_k", 3)),
+                                 random_ratio=random_ratio, rng=r)
+    toolbox.register("select", selector_fn)
 
     def evaluate(individual: List[int]) -> Tuple[float]:
         # simulate genome -> graph, also collect which rules truly effected changes
@@ -712,47 +783,12 @@ def evolve(
     for gen in range(1, ngen + 1):
         # elitism: copy best E
         elites = tools.selBest(pop, k=elitism)
+        
 
-        # choose parents according to method (+ optional random exploration tail)
-        parents_needed = pop_size - elitism
-        method = str(ga_cfg.get("selection_method", "tournament"))
-        rand_ratio = float(ga_cfg.get("random_selection_ratio", 0.0))
-        rand_k = int(parents_needed * max(0.0, min(1.0, rand_ratio)))
-
-        selected = _select_parents(pop, k=parents_needed - rand_k, method=method, rng=r,
-                                tourn_k=int(ga_cfg.get("tournament_k", 3)))
-        if rand_k > 0:
-            selected += tools.selRandom(pop, k=rand_k)
-
-
-
-
-        # --- offspring via selection (respect 'selection.method') ---
-        sel_cfg = ga_cfg.get("selection", {})
-        sel_method = str(sel_cfg.get("method", "tournament")).lower()
-        rand_ratio = float(sel_cfg.get("random_ratio", 0.0))
-        k_off = pop_size - elitism
-
-        if sel_method == "rank":
-            weights = _rank_weights(len(pop))
-            # indices 0..N-1 sorted by fitness descending is *not* required;
-            # we use weights over current population order
-            idxs = r.choices(range(len(pop)), weights=weights, k=k_off)
-            offspring = [toolbox.clone(pop[i]) for i in idxs]
-
-        elif sel_method == "roulette":
-            fits_now = [ind.fitness.values[0] for ind in pop]
-            weights = _roulette_weights(fits_now)
-            idxs = r.choices(range(len(pop)), weights=weights, k=k_off)
-            offspring = [toolbox.clone(pop[i]) for i in idxs]
-
-        elif sel_method == "elite":
-            offspring = [toolbox.clone(ind) for ind in tools.selBest(pop, k=k_off)]
-
-        else:
-            # default: tournament (kept for back-compat / configs)
-            offspring = tools.selTournament(pop, k=k_off, tournsize=int(ga_cfg.get("tournament_k", 3)))
-            offspring = list(map(toolbox.clone, offspring))
+        # offspring via variation
+        offspring = toolbox.select(pop, k=pop_size - elitism)   # <— use our selector here
+        offspring = list(map(toolbox.clone, offspring))
+       
 
         # optional random immigrants
         n_rand = int(rand_ratio * k_off)
