@@ -1,4 +1,4 @@
-# M2 — Week 4 GA Alignment Plan (C# Parity) — **UPDATED**
+# M2 — Week 5 GA Alignment Plan (C# Parity) — **UPDATED**
 
 **Goal:** Align the Python GA with the legacy C# behavior so evolution reliably grows mesh structures
 (starting with triangles, later quads & hex). This document captures the **key decisions**, **tasks**, **test

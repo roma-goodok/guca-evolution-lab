@@ -99,9 +99,9 @@ fitness:
 ga:
   _target_: guca.ga.experiment.GAExperiment
   
-
-  selection_method: elite           # elite | rank | roulette | tournament
-  random_selection_ratio: 0.0       # e.g. 0.05 for 5% pure random
+  selection:
+    method: rank        # rank | tournament | roulette
+    random_ratio: 0.0   # portion of picks done uniformly at random
 
   active:                           # legacy: active byte, p=0.10, +rotate 0.02
     factor: 0.10
