@@ -75,12 +75,17 @@
 ---
 
 ## Week 4 — DEAP integration + configs + GA run (planned)
-- [ ] Encoding/toolbox/evaluate for GA  
-- [ ] Hydra configs for GA population/steps/etc.  
-- [ ] GA example script with CSV logs  
-- [ ] Tests: GA smoke test, reproducibility with seed  
+- [x] Encoding/toolbox/evaluate for GA  
+- [x] Hydra configs for GA population/steps/etc.  
+- [x] GA example script with CSV logs  
+- [x] Tests: GA smoke test, reproducibility with seed  
 
 **Target Deliverables:**  
 - Working GA loop with DEAP.  
 - Population fitness log, reproducibility with seeds.  
 - Config-driven runs (`python -m guca.examples.run_ga`). 
+
+Status: formally ok, but baseline experiment (triangle mesh) doesn't converge
+
+## Week 5 - GA Alignment Plan (C# Parity)
+see `docs/01_plans/m2_week5_alignment_plan.md`
