@@ -62,8 +62,8 @@ def mutate_rotate(g: int, rng: random.Random) -> int:
 
 def mutate_enum_delta(g: int, *, state_count: int, rng: random.Random) -> int:
     """
-    Decode the gene into a structured Rule, nudge enumerated fields slightly,
-    then re-encode. Keeps enums in-range and op_kind within OpKind bounds.
+    Decode → nudge enum-like fields slightly → encode.
+    Keeps enums in-range and op_kind within OpKind bounds.
     """
     try:
         r = decode_gene(g, state_count=state_count)
@@ -71,40 +71,34 @@ def mutate_enum_delta(g: int, *, state_count: int, rng: random.Random) -> int:
         # If decoding fails (shouldn't happen for valid genes), randomize as fallback
         return mutate_allbytes(g, rng)
 
-    # Carefully perturb enumerated fields
     # 1) cond_current in [0..state_count-1]
-    if hasattr(r, "cond_current"):
+    if state_count > 0:
         delta = rng.choice([-1, +1])
-        r.cond_current = int((int(r.cond_current) + delta) % max(1, state_count))
+        r.cond_current = (int(r.cond_current) + delta) % max(1, state_count)
 
-    # 2) operand may be None or an enum in state domain
-    if hasattr(r, "operand"):
-        if r.operand is None:
-            # sometimes introduce an operand
-            if rng.random() < 0.25 and state_count > 0:
-                r.operand = int(rng.randrange(state_count))
-        else:
-            if state_count > 0:
-                delta = rng.choice([-1, +1])
-                r.operand = int((int(r.operand) + delta) % state_count)
-            # occasionally drop operand
-            if rng.random() < 0.05:
-                r.operand = None
+    # 2) operand: may be None or an enum in state domain
+    if r.operand is None:
+        if state_count > 0 and rng.random() < 0.25:
+            r.operand = int(rng.randrange(state_count))
+    else:
+        if state_count > 0 and rng.random() < 0.75:
+            delta = rng.choice([-1, +1])
+            r.operand = (int(r.operand) + delta) % max(1, state_count)
+        elif rng.random() < 0.10:
+            r.operand = None
 
-    # 3) op_kind: small local change inside the enum range
-    if hasattr(r, "op_kind") and isinstance(r.op_kind, OpKind):
-        all_kinds = list(OpKind)
-        idx = all_kinds.index(r.op_kind)
-        if rng.random() < 0.15:
-            idx = (idx + rng.choice([-1, +1])) % len(all_kinds)
-            r.op_kind = all_kinds[idx]
+    # 3) op_kind: nudge within enum
+    all_kinds = list(OpKind)
+    idx = (all_kinds.index(r.op_kind) + rng.choice([-1, +1])) % len(all_kinds)
+    r.op_kind = all_kinds[idx]
 
+    # 4) re-encode (no state_count arg here)
     try:
-        g2 = encode_rule(r, state_count=state_count)
+        return encode_rule(r)
     except Exception:
-        # If re-encoding fails (e.g., unexpected shape), keep original
-        g2 = g
-    return int(g2) & _MASK64
+        # If re-encoding fails, fallback to a coarse byte mutation
+        return mutate_byte(g, rng)
+
 
 
 # ----------------------------- Crossover (splice) -----------------------------
@@ -135,15 +129,16 @@ def splice_cx(ind1: List[int], ind2: List[int], *, rng: random.Random, unaligned
 
 def _valid_gene(g: int) -> bool:
     """
-    Quick sanity: decodes & re-encodes with a small state domain; ensures no exception.
-    We do not require exact round-trips bit-for-bit (encoders may normalize).
+    Quick sanity: decode & re-encode; any exception means invalid.
+    We do not require bit-for-bit roundtrips (encoders may normalize).
     """
     try:
-        r = decode_gene(g, state_count=8)  # small domain (enough for tests A..H)
-        _ = encode_rule(r, state_count=8)
+        r = decode_gene(g, state_count=8)  # small domain is enough
+        _ = encode_rule(r)                 # <-- do NOT pass state_count
         return True
     except Exception:
         return False
+
 
 
 # ------------------------ Mutation factory (GA operators) ---------------------

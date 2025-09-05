@@ -170,9 +170,12 @@ def _apply_rules_once(
 
         elif op == OpKind.GiveBirth:
             if operand_sid is not None:
+                # Treat legacy 'GiveBirth' exactly like 'GiveBirthConnected' (C# effective semantics)
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
                 to_add_nodes.append((new_id, int(operand_sid)))
+                to_add_edges.append((u, new_id))  # <-- connect newborn to the active parent
                 rule_effective = True
+
 
         elif op == OpKind.GiveBirthConnected:
             if operand_sid is not None:
@@ -353,7 +356,28 @@ def simulate_genome(
     G.add_node(0, state_id=int(start_sid), parents_count=0, prev_state_id=int(start_sid))
 
     # decode rules and stabilize priority (first rule per cond_current wins)
-    rules = [decode_gene(g, state_count=len(states)) for g in genes]
+    enc_cfg = dict(machine_cfg.get("encoding", {}))
+    sanitize_on_decode = bool(enc_cfg.get("sanitize_on_decode", False))
+    enforce_semantics  = bool(enc_cfg.get("enforce_semantics", False))
+    canonicalize_flags = bool(enc_cfg.get("canonicalize_flags", False))
+    enforce_bounds_ord = bool(enc_cfg.get("enforce_bounds_order", False))
+
+    if sanitize_on_decode:
+        genes_eff = [
+            sanitize_gene(
+                g,
+                state_count=len(states),
+                enforce_semantics=enforce_semantics,
+                canonicalize_flags=canonicalize_flags,
+                enforce_bounds_order=enforce_bounds_ord,
+            )
+            for g in genes
+        ]
+    else:
+        genes_eff = list(genes)
+
+    rules = [decode_gene(g, state_count=len(states)) for g in genes_eff]
+
     rid_by_cond: Dict[int, int] = {}
     for i, r in enumerate(rules):
         rid_by_cond.setdefault(int(r.cond_current), i)
