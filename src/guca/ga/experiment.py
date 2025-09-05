@@ -1,5 +1,7 @@
 # src/guca/ga/experiment.py
 from __future__ import annotations
+from dataclasses import dataclass, field, asdict
+
 
 from dataclasses import dataclass, asdict, field as dc_field, is_dataclass
 from pathlib import Path
@@ -16,6 +18,26 @@ except Exception:
 
 
 # ---- Sub-configs as dataclasses (safe defaults) -------------------------------
+
+@dataclass
+class ActiveCfg:
+    factor: float = 0.10          # P(mutate) per active gene
+    kind: str = "byte"            # bit|byte|allbytes|rotate
+    rotate_extra_pb: float = 0.20 # extra rotate chance *after* main mutate
+
+@dataclass
+class PassiveCfg:
+    factor: float = 0.50
+    kind: str = "allbytes"
+    rotate_extra_pb: float = 0.20
+
+@dataclass
+class StructuralXCfg:
+    insert_active_pb: float = 0.10         # insert(copy_of_random_active_gene)
+    remove_inactive_pb: float = 0.10       # remove(random_inactive_gene) if len>=threshold
+    remove_inactive_min_len: int = 100
+    duplicate_head_pb: float = 0.20        # duplicate gene[0] to front
+
 
 @dataclass
 class StructuralCfg:
@@ -41,6 +63,7 @@ class CheckpointCfg:
     out_dir: str = "checkpoints"
     export_full_condition_shape: bool = False
     save_best_png: bool = False
+
 
 
 # ---- Helper: normalize nested value -> dataclass instance ---------------------
@@ -83,9 +106,21 @@ def _normalize_dc(cls, value):
 
 
 # ---- Main Hydra-instantiated GA config ---------------------------------------
-
 @dataclass
 class GAExperiment:
+    # Selection method & exploration
+
+
+
+
+    selection_method: str = "rank"        # elite | rank | roulette | tournament
+    random_selection_ratio: float = 0.0   # e.g., 0.05 for 5% random immigrants
+
+    # Active/passive mutation regimes (C#-style)
+    active: ActiveCfg = field(default_factory=ActiveCfg)
+    passive: PassiveCfg = field(default_factory=PassiveCfg)
+    structuralx: StructuralXCfg = field(default_factory=StructuralXCfg)
+
     # GA parameters
     pop_size: int = 40
     generations: int = 20
@@ -157,7 +192,14 @@ class GAExperiment:
                 "min_len": self.min_len,
                 "max_len": self.max_len,
                 "structural": asdict(self.structural),
-                "field": asdict(self.field),
+                "field": asdict(self.field),    
+                "active": asdict(self.active),
+                "passive": asdict(self.passive),
+                "structuralx": asdict(self.structuralx),
+                "selection": {
+                    "method": self.selection_method,
+                    "random_ratio": self.random_selection_ratio,
+                },
             },
             states=states,
             seed=seed,

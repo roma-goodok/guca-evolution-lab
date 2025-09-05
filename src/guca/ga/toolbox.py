@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Set
 from collections import Counter
+
 
 import random
 
@@ -72,10 +73,18 @@ def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth
         import random
         return [random.choice(cands)]
 
-
-def _apply_rules_once(G: nx.Graph, rules: List[Rule], *, machine_cfg: Dict[str, Any]) -> bool:
+def _apply_rules_once(
+    G: nx.Graph,
+    rules: List[Rule],
+    *,
+    machine_cfg: Dict[str, Any],
+    active_hits: Optional[List[bool]] = None,
+    rid_by_cond: Optional[Dict[int, int]] = None,
+) -> bool:
     """
     Apply rules to all nodes in a deterministic order; return True if any change occurred.
+    If 'active_hits' is provided, mark rules that EFFECTED a change at least once in this step.
+    Rule selection is by the first rule for a given cond_current (rid_by_cond).
     """
     # Unpack machine params
     max_vertices = int(machine_cfg.get("max_vertices", 0) or 0)
@@ -91,62 +100,86 @@ def _apply_rules_once(G: nx.Graph, rules: List[Rule], *, machine_cfg: Dict[str, 
     to_remove_nodes: List[int] = []
     state_updates: List[Tuple[int, int]] = []
 
-    # deterministic iteration
     for u in sorted(G.nodes()):
         cur_sid = int(G.nodes[u]["state_id"])
-        # pick first matching rule by cond_current
-        rule = next((r for r in rules if r.cond_current == cur_sid), None)
-        if rule is None:
+
+        # pick first matching rule by cond_current via table index
+        rid = None
+        if rid_by_cond is not None:
+            rid = rid_by_cond.get(cur_sid)
+        if rid is None:
+            # fallback to linear search (should not happen if rid_by_cond is provided)
+            rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
+        if rid is None:
             continue
 
+        rule = rules[rid]
         op = rule.op_kind
         operand_sid = rule.operand if rule.operand is not None else None
 
+        rule_effective = False
+
         if op == OpKind.TurnToState:
             if operand_sid is not None and operand_sid != cur_sid:
-                state_updates.append((u, operand_sid))
+                state_updates.append((u, int(operand_sid)))
+                rule_effective = True
 
         elif op == OpKind.GiveBirth:
-            # create a node but don't connect
             if operand_sid is not None:
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, operand_sid))
+                to_add_nodes.append((new_id, int(operand_sid)))
+                rule_effective = True
 
         elif op == OpKind.GiveBirthConnected:
             if operand_sid is not None:
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, operand_sid))
+                to_add_nodes.append((new_id, int(operand_sid)))
                 to_add_edges.append((u, new_id))
+                rule_effective = True
 
         elif op == OpKind.TryToConnectWith:
             if operand_sid is not None:
-                # connect to ALL nodes that have operand state and are not already neighbors
                 targets = [v for v in G.nodes()
-                           if v != u and G.nodes[v].get("state_id") == operand_sid and not G.has_edge(u, v)]
-                for v in targets:
-                    to_add_edges.append((u, v))
+                           if v != u and G.nodes[v].get("state_id") == int(operand_sid) and not G.has_edge(u, v)]
+                if targets:
+                    for v in targets:
+                        to_add_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.TryToConnectWithNearest:
             if operand_sid is not None:
-                cands = _nearest_candidates(G, u, operand_sid, max_depth=max_depth, tie_breaker=tie_breaker, connect_all=connect_all)
-                for v in cands:
-                    if not G.has_edge(u, v):
+                cands = _nearest_candidates(G, u, int(operand_sid),
+                                            max_depth=max_depth,
+                                            tie_breaker=tie_breaker,
+                                            connect_all=connect_all)
+                cands = [v for v in cands if not G.has_edge(u, v)]
+                if cands:
+                    for v in cands:
                         to_add_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.DisconnectFrom:
             if operand_sid is not None:
-                targets = [v for v in list(G.neighbors(u)) if G.nodes[v].get("state_id") == operand_sid]
-                for v in targets:
-                    to_remove_edges.append((u, v))
+                targets = [v for v in list(G.neighbors(u)) if G.nodes[v].get("state_id") == int(operand_sid)]
+                if targets:
+                    for v in targets:
+                        to_remove_edges.append((u, v))
+                    rule_effective = True
 
         elif op == OpKind.Die:
             to_remove_nodes.append(u)
+            rule_effective = True
+
+        # if this rule created any concrete change requests, mark as active
+        if rule_effective and active_hits is not None and 0 <= rid < len(active_hits):
+            active_hits[rid] = True
 
     # apply removals first
     for (u, v) in to_remove_edges:
         if G.has_edge(u, v):
             G.remove_edge(u, v)
             changed = True
+
     if to_remove_nodes:
         for u in sorted(set(to_remove_nodes), reverse=True):
             if G.has_node(u):
@@ -169,18 +202,103 @@ def _apply_rules_once(G: nx.Graph, rules: List[Rule], *, machine_cfg: Dict[str, 
 
     # update states
     for (u, sid) in state_updates:
-        if G.has_node(u):
-            if int(G.nodes[u]["state_id"]) != int(sid):
-                G.nodes[u]["state_id"] = int(sid)
-                changed = True
+        if G.has_node(u) and int(G.nodes[u]["state_id"]) != int(sid):
+            G.nodes[u]["state_id"] = int(sid)
+            changed = True
 
     return changed
 
 
-def simulate_genome(genes: List[int], *, states: List[str], machine_cfg: Dict[str, Any]) -> nx.Graph:
+
+def _rank_weights(n: int) -> List[float]:
+    # linear ranking: n..1 then normalize
+    raw = [float(n - i) for i in range(n)]
+    s = sum(raw) or 1.0
+    return [x/s for x in raw]
+
+def _roulette_weights(fits: List[float]) -> List[float]:
+    # shift if any non-positive, then normalize
+    mn = min(fits) if fits else 0.0
+    shift = 1e-9 - mn if mn <= 0 else 0.0
+    raw = [max(0.0, f + shift) for f in fits]
+    s = sum(raw) or 1.0
+    return [x/s for x in raw]
+
+
+# --- Selection helpers --------------------------------------------------------
+from typing import Callable
+
+def _sel_rank(pop, k: int, rng: random.Random, random_ratio: float = 0.0):
+    """
+    Linear rank selection (higher fitness -> higher rank).
+    Mix in a small fraction of uniform random picks if random_ratio > 0.
+    Sampling is with replacement.
+    """
+    if k <= 0:
+        return []
+
+    # Sort by descending fitness
+    sorted_pop = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
+    n = len(sorted_pop)
+    if n == 0:
+        return []
+
+    # ranks: n..1 (linear)
+    ranks = list(range(n, 0, -1))
+    total = sum(ranks)
+    probs = [r / total for r in ranks]
+
+    k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+    k_rand = max(0, k - k_rank)
+
+    selected = []
+    if k_rank > 0:
+        # rng.choices is deterministic under seeded rng
+        selected.extend(rng.choices(sorted_pop, weights=probs, k=k_rank))
+    if k_rand > 0:
+        selected.extend(rng.choices(pop, k=k_rand))
+    return selected
+
+
+def _make_selector(method: str, tournament_k: int, random_ratio: float, rng: random.Random) -> Callable:
+    """
+    Return a selection function sel(pop, k) based on GA config.
+    """
+    m = (method or "rank").lower()
+    if m == "rank":
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+    elif m == "tournament":
+        # keep DEAP tournament
+        return lambda pop, k: tools.selTournament(pop, k=k, tournsize=max(2, int(tournament_k)))
+    elif m == "roulette":
+        # roulette on raw fitness (DEAP)
+        # optional mixing with random picks if random_ratio > 0
+        def _roulette(pop, k):
+            k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+            k_rand = max(0, k - k_rank)
+            part = tools.selRoulette(pop, k=k_rank) if k_rank > 0 else []
+            if k_rand > 0:
+                part.extend(rng.choices(pop, k=k_rand))
+            return part
+        return _roulette
+    else:
+        # fallback = rank
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+
+
+
+
+def simulate_genome(
+    genes: List[int],
+    *,
+    states: List[str],
+    machine_cfg: Dict[str, Any],
+    collect_activity: bool = False,
+) -> nx.Graph | Tuple[nx.Graph, List[bool]]:
     """
     Minimal in-process simulator for GA evaluation.
-    Starts from one node with machine.start_state if init graph is omitted.
+    Starts from one node with start_state unless an init graph is provided by the caller.
+    If collect_activity=True, also returns a boolean list mark of rules that EFFECTED changes.
     """
     # initial graph: single node with start_state
     start_label = str(machine_cfg.get("start_state", "A"))
@@ -188,21 +306,43 @@ def simulate_genome(genes: List[int], *, states: List[str], machine_cfg: Dict[st
     try:
         start_sid = inv.index(start_label)
     except ValueError:
-        start_sid = 0  # fallback
+        start_sid = 0
 
     G = nx.Graph()
     G.add_node(0, state_id=int(start_sid))
-   
-    # decode rules in *genome order* (priority = gene position)
+
+    # decode rules and stabilize priority (first rule per cond_current)
     rules = [decode_gene(g, state_count=len(states)) for g in genes]
+    rules.sort(key=lambda r: (int(r.cond_current), int(r.op_kind)))
+
+    # build "first rule by condition" map
+    rid_by_cond: Dict[int, int] = {}
+    for i, r in enumerate(rules):
+        cur = int(r.cond_current)
+        if cur not in rid_by_cond:
+            rid_by_cond[cur] = i
+
+    active_hits: Optional[List[bool]] = [False] * len(rules) if collect_activity else None
 
     max_steps = int(machine_cfg.get("max_steps", 120))
     for _ in range(max_steps):
-        if not _apply_rules_once(G, rules, machine_cfg=machine_cfg):
+        stepped = _apply_rules_once(
+            G,
+            rules,
+            machine_cfg=machine_cfg,
+            active_hits=active_hits,
+            rid_by_cond=rid_by_cond,
+        )
+        if not stepped:
             break
         if machine_cfg.get("max_vertices", 0) and G.number_of_nodes() >= int(machine_cfg["max_vertices"]):
             break
+
+    if collect_activity:
+        return G, (active_hits or [])
     return G
+
+
 
 
 # =======================
@@ -439,6 +579,24 @@ def _eval_only(genes: List[int]) -> float:
     return float(_WFIT.score(G))
 
 
+def _select_parents(pop, k, method: str, rng: random.Random, tourn_k: int):
+    m = method.lower()
+    if m == "elite":
+        return tools.selBest(pop, k)
+    elif m == "roulette":
+        return tools.selRoulette(pop, k)
+    elif m == "rank":
+        # linear rank weights: n..1
+        order = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
+        weights = list(reversed(range(1, len(pop) + 1)))  # 1..n (ascending)
+        # align to 'order' (largest weight for best)
+        weights = list(range(len(pop), 0, -1))
+        return rng.choices(order, weights=weights, k=k)
+    else:
+        return tools.selTournament(pop, k=k, tournsize=tourn_k)
+
+
+
 # ======================
 # Evolve loop
 # ======================
@@ -460,6 +618,7 @@ def evolve(
     max_len = int(ga_cfg.get("max_len", 64))
     init_len = int(ga_cfg.get("init_len", 6))
 
+
     # DEAP setup
     try:
         creator.FitnessMax  # type: ignore[attr-defined]
@@ -477,10 +636,35 @@ def evolve(
 
     # operators
     def cx(ind1, ind2):
-        c1, c2 = splice_cx(ind1, ind2, rng=r, unaligned=True)
-        ind1[:] = c1
-        ind2[:] = c2
+        L1, L2 = len(ind1), len(ind2)
+        if L1 == 0 or L2 == 0:
+            return ind1, ind2
+        c1 = r.randrange(1, L1)  # [1..L1-1]
+        c2 = r.randrange(1, L2)  # [1..L2-1]
+
+        child1 = ind1[:c1] + ind2[c2:]
+        child2 = ind2[:c2] + ind1[c1:]
+
+        # clamp to max_len (like legacy: min(max_len, c + tail_len))
+        if len(child1) > max_len:
+            child1 = child1[:max_len]
+        if len(child2) > max_len:
+            child2 = child2[:max_len]
+
+        # splice active masks if present
+        m1 = getattr(ind1, "active_mask", [False]*L1)
+        m2 = getattr(ind2, "active_mask", [False]*L2)
+        child1_mask = (m1[:c1] + m2[c2:])[:len(child1)]
+        child2_mask = (m2[:c2] + m1[c1:])[:len(child2)]
+
+        ind1[:] = child1
+        ind2[:] = child2
+        setattr(ind1, "active_mask", child1_mask)
+        setattr(ind2, "active_mask", child2_mask)
         return ind1, ind2
+
+    toolbox.register("mate", cx)
+
 
     mutate = make_mutate_fn(
         state_count=state_count,
@@ -488,16 +672,39 @@ def evolve(
         max_len=max_len,
         structural_cfg=ga_cfg.get("structural", {}),
         field_cfg=ga_cfg.get("field", {}),
+        active_cfg=ga_cfg.get("active", {}),
+        passive_cfg=ga_cfg.get("passive", {}),
+        structuralx_cfg=ga_cfg.get("structuralx", {}),
         rng=r,
     )
 
-    toolbox.register("mate", cx)
     toolbox.register("mutate", mutate)
-    toolbox.register("select", tools.selTournament, tournsize=int(ga_cfg.get("tournament_k", 3)))
 
-    # evaluation wrapper (DEAP API); real work in _eval_only
+    # selection policy (C# alignment default = rank)
+    sel_cfg = ga_cfg.get("selection", {}) or {}
+    selection_method = str(sel_cfg.get("method", "rank"))
+    random_ratio = float(sel_cfg.get("random_ratio", 0.0))
+
+    # Build and register selector into toolbox
+    selector_fn = _make_selector(selection_method, tournament_k=int(ga_cfg.get("tournament_k", 3)),
+                                 random_ratio=random_ratio, rng=r)
+    toolbox.register("select", selector_fn)
+
     def evaluate(individual: List[int]) -> Tuple[float]:
-        return (_eval_only(individual),)
+        # simulate genome -> graph, also collect which rules truly effected changes
+        G, active_mask = simulate_genome(
+            individual,
+            states=states,
+            machine_cfg=machine_cfg,
+            collect_activity=True,
+        )
+        # stash mask on the individual for the next mutation call
+        setattr(individual, "active_mask", list(active_mask))
+        # score
+        score = float(fitness.score(G))
+        return (score,)
+
+
 
     toolbox.register("evaluate", evaluate)
 
@@ -576,12 +783,19 @@ def evolve(
     for gen in range(1, ngen + 1):
         # elitism: copy best E
         elites = tools.selBest(pop, k=elitism)
+        
 
-        # offspring via variation        
-        parents = elites + tools.selTournament(pop, k=pop_size - elitism, tournsize=int(ga_cfg.get("tournament_k", 3)))
-        offspring = list(map(toolbox.clone, parents))
+        # offspring via variation
+        offspring = toolbox.select(pop, k=pop_size - elitism)   # <— use our selector here
         offspring = list(map(toolbox.clone, offspring))
+       
 
+        # optional random immigrants
+        n_rand = int(rand_ratio * k_off)
+        for i in range(n_rand):
+            # replace the first n_rand with fresh random individuals
+            offspring[i][:] = toolbox.individual()
+        
         # mate
         for i in range(1, len(offspring), 2):
             if r.random() < cx_pb:

@@ -54,6 +54,11 @@ class Rule:
     op_kind: OpKind
     operand: Optional[int] = None  # state id or None
     flags: int = 0                # 8-bit flags, reserved for future
+    # inside @dataclass class Rule: ...
+    def __int__(self) -> int:
+        # Allow tests and callers to do: int(rule)
+        return encode_rule(self)
+
 
 
 # -----------------------------
