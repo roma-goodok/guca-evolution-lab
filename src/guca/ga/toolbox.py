@@ -425,8 +425,8 @@ def _genes_to_yaml_rules(
 ) -> List[Dict[str, Any]]:
     """
     Convert encoded genes to YAML-rule dicts.
-    If full_condition=True, include a 'condition_meta' block with **actual values**
-    for predicates (prior, conn_ge/le, parents_ge/le).
+    If full_condition=True, include a 'condition_meta' block with placeholders
+    for predicates not yet encoded (keeps YAML shape stable).
     """
     out: List[Dict[str, Any]] = []
     for g in genes:
@@ -436,16 +436,15 @@ def _genes_to_yaml_rules(
         operand = None if r.operand is None else states[int(r.operand)]
 
         if full_condition:
-            cond_meta: Dict[str, Any] = {
-                "prior": None if r.prior is None else states[int(r.prior)],
-                "conn_ge": r.conn_ge,
-                "conn_le": r.conn_le,
-                "parents_ge": r.parents_ge,
-                "parents_le": r.parents_le,
-            }
             row = {
                 "condition": {"current": cur},
-                "condition_meta": cond_meta,
+                "condition_meta": {
+                    "prior": None,
+                    "conn_ge": None,
+                    "conn_le": None,
+                    "parents_ge": None,
+                    "parents_le": None,
+                },
                 "op": {"kind": op},
             }
         else:
@@ -456,15 +455,6 @@ def _genes_to_yaml_rules(
 
         out.append(row)
     return out
-
-
-
-
-
-
-
-
-
 
 def _write_checkpoint_best(
     ckpt_dir: Path,
@@ -491,28 +481,26 @@ def _write_checkpoint_best(
                 "fitness": float(fitness),
                 "rules": _genes_to_yaml_rules(genes, states, full_condition=full_condition),
             }
-            if graph_summary is not None:
+            if graph_summary:
                 data["graph_summary"] = graph_summary
             p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=False)
-            out["best"] = str(p)
-            return out
-        except Exception as e:
-            print(f"[WARN] YAML requested but unavailable ({e}); falling back to JSON.")
+                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+        except Exception:
+            # fallback to JSON if yaml not available
+            fmt = "json"
 
-    # JSON fallback
-    p = ckpt_dir / "best.json"
-    payload: Dict[str, Any] = {
-        "fitness": float(fitness),
-        "genes": _genes_to_hex(genes),
-    }
-    if graph_summary is not None:
-        payload["graph_summary"] = graph_summary
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2)
+    if fmt == "json":
+        payload = {"fitness": float(fitness), "genes": _genes_to_hex(genes)}
+        if graph_summary:
+            payload["graph_summary"] = graph_summary
+        p = ckpt_dir / "best.json"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+
     out["best"] = str(p)
     return out
+
 
 
 def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
@@ -815,19 +803,23 @@ def evolve(
     ckpt = checkpoint_cfg or {}
     ckpt_dir = (run_dir / ckpt.get("out_dir", "checkpoints"))
     fmt = str(ckpt.get("fmt", "json")).lower()
+
+    # parse checkpoint options
     save_best = bool(ckpt.get("save_best", True))
     save_last = bool(ckpt.get("save_last", True))
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
     full_cond = bool(ckpt.get("export_full_condition_shape", False))
-    save_best_png = bool(ckpt.get("save_best_png", False))
-
+    save_best_png = bool(ckpt.get("save_best_png", False))    
 
 
     # initial checkpoints (generation 0)
     hof.update(pop)
     best0 = hof[0]    
+    
     _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states, full_condition=full_cond)
+
+
     if save_population in ("best", "all"):
         _write_checkpoint_pop(ckpt_dir, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop], save_population)
     if save_every and save_every > 0:
@@ -934,7 +926,7 @@ def evolve(
     if save_best:
         paths.update(_write_checkpoint_best(
             ckpt_dir, list(best), best.fitness.values[0], fmt, states,
-            graph_summary=gsum
+            full_condition=full_cond, graph_summary=gsum
         ))
 
     if save_last:
