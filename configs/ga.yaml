@@ -57,20 +57,17 @@ machine:
 #     target_presence_bonus: 1.6
 #     w_forbidden_faces: {3: 0.8}
 
-# Mesh: Triangle
 fitness:
   _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.MeshWeights
-    # w_face: 0.2
-    # w_deg: 0.2
-    # w_shell: 0.4
-    # w_nontarget: 0.5
-    # w_internal: 0.30
-    # w_size: 0.20
-    # size_cap: 10
-    # target_presence_bonus: 1.6
-    #w_forbidden_faces: {6: 0.8}
+    disconnected_mul: 0.05
+    forest_cap_min: 1.05
+    forest_ceiling: 1.19
+    forest_size_bonus: 0.08
+    forest_size_ref_n: 12
+    cycle_floor: 1.21
+    cycle_eps: 0.001
+
 
 # # Mesh: Quad
 # fitness:
@@ -118,6 +115,13 @@ ga:
     remove_inactive_pb: 0.10
     remove_inactive_min_len: 100
     duplicate_head_pb: 0.20
+
+  encoding:
+    sanitize_on_decode: false   # default off (C#-style)
+    enforce_semantics: false    # only used if sanitize_on_decode: true
+    canonicalize_flags: false
+    enforce_bounds_order: false
+
 
   # Core GA parameters
   pop_size: 40

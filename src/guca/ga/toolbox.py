@@ -73,6 +73,41 @@ def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth
         import random
         return [random.choice(cands)]
 
+def _check_rule_condition(G: nx.Graph, u: int, rule: Rule) -> bool:
+    """
+    Gate a rule by its extended condition:
+      - current state matches (enforced by the caller's indexing)
+      - prior (if set) equals node.prev_state_id
+      - degree bounds (conn_ge/le) on current graph degree
+      - parents bounds (parents_ge/le) on node.parents_count (defaults to 0)
+    """
+    cur_sid = int(G.nodes[u].get("state_id"))
+    if int(rule.cond_current) != cur_sid:
+        return False
+
+    # prior state
+    prior_sid = G.nodes[u].get("prev_state_id")
+    if rule.prior is not None and prior_sid is not None:
+        if int(prior_sid) != int(rule.prior):
+            return False
+
+    # degree bounds
+    deg = int(G.degree[u])
+    if rule.conn_ge is not None and deg < int(rule.conn_ge):
+        return False
+    if rule.conn_le is not None and deg > int(rule.conn_le):
+        return False
+
+    # parents bounds
+    parents = int(G.nodes[u].get("parents_count", 0))
+    if rule.parents_ge is not None and parents < int(rule.parents_ge):
+        return False
+    if rule.parents_le is not None and parents > int(rule.parents_le):
+        return False
+
+    return True
+
+
 def _apply_rules_once(
     G: nx.Graph,
     rules: List[Rule],
@@ -88,10 +123,12 @@ def _apply_rules_once(
     """
     # Unpack machine params
     max_vertices = int(machine_cfg.get("max_vertices", 0) or 0)
-    ns = machine_cfg.get("nearest_search", {}) or {}
-    max_depth = int(ns.get("max_depth", 2))
-    tie_breaker = str(ns.get("tie_breaker", "stable"))
-    connect_all = bool(ns.get("connect_all", False))
+
+    # ensure per-node bookkeeping
+    for u in G.nodes():
+        G.nodes[u].setdefault("parents_count", 0)
+        if "prev_state_id" not in G.nodes[u]:
+            G.nodes[u]["prev_state_id"] = int(G.nodes[u].get("state_id"))
 
     changed = False
     to_add_nodes: List[Tuple[int, int]] = []   # (new_id, state_id)
@@ -106,14 +143,21 @@ def _apply_rules_once(
         # pick first matching rule by cond_current via table index
         rid = None
         if rid_by_cond is not None:
-            rid = rid_by_cond.get(cur_sid)
-        if rid is None:
-            # fallback to linear search (should not happen if rid_by_cond is provided)
+            rid = rid_by_cond.get(int(cur_sid))
+            if rid is None:
+                # fallback to linear search (should not happen if rid_by_cond is provided)
+                rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
+        else:
+            # fallback to linear search
             rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
         if rid is None:
             continue
 
         rule = rules[rid]
+        # NEW: full condition gate
+        if not _check_rule_condition(G, u, rule):
+            continue
+
         op = rule.op_kind
         operand_sid = rule.operand if rule.operand is not None else None
 
@@ -126,9 +170,12 @@ def _apply_rules_once(
 
         elif op == OpKind.GiveBirth:
             if operand_sid is not None:
+                # Treat legacy 'GiveBirth' exactly like 'GiveBirthConnected' (C# effective semantics)
                 new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
                 to_add_nodes.append((new_id, int(operand_sid)))
+                to_add_edges.append((u, new_id))  # <-- connect newborn to the active parent
                 rule_effective = True
+
 
         elif op == OpKind.GiveBirthConnected:
             if operand_sid is not None:
@@ -148,10 +195,12 @@ def _apply_rules_once(
 
         elif op == OpKind.TryToConnectWithNearest:
             if operand_sid is not None:
-                cands = _nearest_candidates(G, u, int(operand_sid),
-                                            max_depth=max_depth,
-                                            tie_breaker=tie_breaker,
-                                            connect_all=connect_all)
+                cands = _nearest_candidates(
+                    G, u, int(operand_sid),
+                    max_depth=int(machine_cfg.get("nearest_search", {}).get("max_depth", 2)),
+                    tie_breaker=str(machine_cfg.get("nearest_search", {}).get("tie_breaker", "stable")),
+                    connect_all=bool(machine_cfg.get("nearest_search", {}).get("connect_all", False))
+                )
                 cands = [v for v in cands if not G.has_edge(u, v)]
                 if cands:
                     for v in cands:
@@ -170,35 +219,31 @@ def _apply_rules_once(
             to_remove_nodes.append(u)
             rule_effective = True
 
-        # if this rule created any concrete change requests, mark as active
-        if rule_effective and active_hits is not None and 0 <= rid < len(active_hits):
+        if rule_effective and active_hits is not None:
             active_hits[rid] = True
 
-    # apply removals first
-    for (u, v) in to_remove_edges:
-        if G.has_edge(u, v):
-            G.remove_edge(u, v)
-            changed = True
+    # respect max_vertices by capping additions (best effort)
+    if max_vertices and G.number_of_nodes() + len(to_add_nodes) > max_vertices:
+        allow = max(0, max_vertices - G.number_of_nodes())
+        to_add_nodes = to_add_nodes[:allow]
 
+    # apply structural edits
+    # add nodes (and initialize bookkeeping)
+    for (new_id, sid) in to_add_nodes:
+        G.add_node(new_id, state_id=int(sid), parents_count=1, prev_state_id=int(sid))
+    # add edges
+    for (u, v) in to_add_edges:
+        if G.has_node(u) and G.has_node(v):
+            G.add_edge(u, v)
+    # remove edges
+    for (u, v) in to_remove_edges:
+        if G.has_node(u) and G.has_edge(u, v):
+            G.remove_edge(u, v)
+    # remove nodes
     if to_remove_nodes:
         for u in sorted(set(to_remove_nodes), reverse=True):
             if G.has_node(u):
                 G.remove_node(u)
-                changed = True
-
-    # add nodes (guard max_vertices)
-    for (nid, sid) in to_add_nodes:
-        if max_vertices and G.number_of_nodes() >= max_vertices:
-            break
-        if not G.has_node(nid):
-            G.add_node(nid, state_id=int(sid))
-            changed = True
-
-    # add edges
-    for (u, v) in to_add_edges:
-        if G.has_node(u) and G.has_node(v) and not G.has_edge(u, v):
-            G.add_edge(u, v)
-            changed = True
 
     # update states
     for (u, sid) in state_updates:
@@ -207,7 +252,6 @@ def _apply_rules_once(
             changed = True
 
     return changed
-
 
 
 def _rank_weights(n: int) -> List[float]:
@@ -309,23 +353,43 @@ def simulate_genome(
         start_sid = 0
 
     G = nx.Graph()
-    G.add_node(0, state_id=int(start_sid))
+    G.add_node(0, state_id=int(start_sid), parents_count=0, prev_state_id=int(start_sid))
 
-    # decode rules and stabilize priority (first rule per cond_current)
-    rules = [decode_gene(g, state_count=len(states)) for g in genes]
-    rules.sort(key=lambda r: (int(r.cond_current), int(r.op_kind)))
+    # decode rules and stabilize priority (first rule per cond_current wins)
+    enc_cfg = dict(machine_cfg.get("encoding", {}))
+    sanitize_on_decode = bool(enc_cfg.get("sanitize_on_decode", False))
+    enforce_semantics  = bool(enc_cfg.get("enforce_semantics", False))
+    canonicalize_flags = bool(enc_cfg.get("canonicalize_flags", False))
+    enforce_bounds_ord = bool(enc_cfg.get("enforce_bounds_order", False))
 
-    # build "first rule by condition" map
+    if sanitize_on_decode:
+        genes_eff = [
+            sanitize_gene(
+                g,
+                state_count=len(states),
+                enforce_semantics=enforce_semantics,
+                canonicalize_flags=canonicalize_flags,
+                enforce_bounds_order=enforce_bounds_ord,
+            )
+            for g in genes
+        ]
+    else:
+        genes_eff = list(genes)
+
+    rules = [decode_gene(g, state_count=len(states)) for g in genes_eff]
+
     rid_by_cond: Dict[int, int] = {}
     for i, r in enumerate(rules):
-        cur = int(r.cond_current)
-        if cur not in rid_by_cond:
-            rid_by_cond[cur] = i
+        rid_by_cond.setdefault(int(r.cond_current), i)
 
     active_hits: Optional[List[bool]] = [False] * len(rules) if collect_activity else None
 
     max_steps = int(machine_cfg.get("max_steps", 120))
     for _ in range(max_steps):
+        # snapshot prior state for this step
+        for u in list(G.nodes()):
+            G.nodes[u]["prev_state_id"] = int(G.nodes[u].get("state_id"))
+
         stepped = _apply_rules_once(
             G,
             rules,
@@ -339,8 +403,9 @@ def simulate_genome(
             break
 
     if collect_activity:
-        return G, (active_hits or [])
+        return G, (active_hits or [False] * len(rules))
     return G
+
 
 
 
@@ -360,8 +425,8 @@ def _genes_to_yaml_rules(
 ) -> List[Dict[str, Any]]:
     """
     Convert encoded genes to YAML-rule dicts.
-    If full_condition=True, include a 'condition_meta' block with placeholders
-    for predicates not yet encoded (keeps YAML runnable by your CLI).
+    If full_condition=True, include a 'condition_meta' block with **actual values**
+    for predicates (prior, conn_ge/le, parents_ge/le).
     """
     out: List[Dict[str, Any]] = []
     for g in genes:
@@ -371,15 +436,16 @@ def _genes_to_yaml_rules(
         operand = None if r.operand is None else states[int(r.operand)]
 
         if full_condition:
+            cond_meta: Dict[str, Any] = {
+                "prior": None if r.prior is None else states[int(r.prior)],
+                "conn_ge": r.conn_ge,
+                "conn_le": r.conn_le,
+                "parents_ge": r.parents_ge,
+                "parents_le": r.parents_le,
+            }
             row = {
                 "condition": {"current": cur},
-                "condition_meta": {
-                    "prior": None,
-                    "conn_ge": None,
-                    "conn_le": None,
-                    "parents_ge": None,
-                    "parents_le": None,
-                },
+                "condition_meta": cond_meta,
                 "op": {"kind": op},
             }
         else:
@@ -390,6 +456,7 @@ def _genes_to_yaml_rules(
 
         out.append(row)
     return out
+
 
 
 
@@ -791,10 +858,25 @@ def evolve(
        
 
         # optional random immigrants
+        k_off = len(offspring)
+
+        # read from new config (ga.selection.random_ratio) with a legacy fallback (ga.random_selection_ratio)
+        sel_cfg = ga_cfg.get("selection", {})
+        rand_ratio = float(sel_cfg.get("random_ratio", ga_cfg.get("random_selection_ratio", 0.0)))
+        rand_ratio = max(0.0, min(1.0, rand_ratio))
+
         n_rand = int(rand_ratio * k_off)
-        for i in range(n_rand):
-            # replace the first n_rand with fresh random individuals
-            offspring[i][:] = toolbox.individual()
+        if n_rand > 0:
+            # Create fresh individuals using the registered DEAP constructors
+            try:
+                immigrants = list(toolbox.population(n=n_rand))
+            except Exception:
+                immigrants = [toolbox.individual() for _ in range(n_rand)]
+            # Overwrite the first n_rand offspring slots (length preserved; deterministic under fixed seed)
+            offspring[:n_rand] = immigrants
+
+
+
         
         # mate
         for i in range(1, len(offspring), 2):
