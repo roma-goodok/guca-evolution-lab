@@ -425,36 +425,73 @@ def _genes_to_yaml_rules(
 ) -> List[Dict[str, Any]]:
     """
     Convert encoded genes to YAML-rule dicts.
-    If full_condition=True, include a 'condition_meta' block with placeholders
-    for predicates not yet encoded (keeps YAML shape stable).
+    If full_condition=True, include a 'condition_meta' block populated from decode_gene.
     """
     out: List[Dict[str, Any]] = []
+    n_states = max(1, len(states))
     for g in genes:
-        r = decode_gene(g, state_count=len(states))
-        cur = states[int(r.cond_current)]
-        op = r.op_kind.name
-        operand = None if r.operand is None else states[int(r.operand)]
+        r = decode_gene(g, state_count=n_states)
 
-        if full_condition:
-            row = {
-                "condition": {"current": cur},
-                "condition_meta": {
-                    "prior": None,
-                    "conn_ge": None,
-                    "conn_le": None,
-                    "parents_ge": None,
-                    "parents_le": None,
-                },
-                "op": {"kind": op},
-            }
-        else:
-            row = {"condition": {"current": cur}, "op": {"kind": op}}
+        cur = states[int(r.cond_current) % n_states]
+        op_name = r.op_kind.name
+        operand = None
+        if getattr(r, "operand", None) is not None:
+            operand = states[int(r.operand) % n_states]
 
+        row: Dict[str, Any] = {"condition": {"current": cur}, "op": {"kind": op_name}}
         if operand is not None:
             row["op"]["operand"] = operand
 
+        if full_condition:
+            # decode_gene exposes semantic fields; map to human-readable YAML
+            prior = getattr(r, "prior", None)
+            if prior is not None:
+                prior = states[int(prior) % n_states]
+
+            row["condition_meta"] = {
+                "prior": prior,  # state label or null
+                "conn_ge": getattr(r, "conn_ge", None),
+                "conn_le": getattr(r, "conn_le", None),
+                "parents_ge": getattr(r, "parents_ge", None),
+                "parents_le": getattr(r, "parents_le", None),
+            }
+
         out.append(row)
     return out
+
+def _activity_scheme(mask: Sequence[bool]) -> str:
+    """
+    Compact, legacy-like visualization:
+    - numbers for consecutive inactive runs
+    - 'x' for each active gene
+    Example: [F,F,T,T,F] -> '2xx1'
+    """
+    if not mask:
+        return ""
+    parts: List[str] = []
+    inactive_run = 0
+    for m in mask:
+        if m:
+            if inactive_run > 0:
+                parts.append(str(inactive_run))
+                inactive_run = 0
+            parts.append("x")
+        else:
+            inactive_run += 1
+    if inactive_run > 0:
+        parts.append(str(inactive_run))
+    return "".join(parts)
+
+def _activity_to_yaml(mask: Optional[Sequence[bool]]) -> Optional[Dict[str, Any]]:
+    if mask is None:
+        return None
+    mask_list = [bool(x) for x in mask]
+    return {
+        "mask": mask_list,
+        "active_count": int(sum(mask_list)),
+        "scheme": _activity_scheme(mask_list),
+    }
+
 
 def _write_checkpoint_best(
     ckpt_dir: Path,
@@ -464,12 +501,13 @@ def _write_checkpoint_best(
     states: List[str],
     *,
     full_condition: bool = False,
-    graph_summary: Optional[Dict[str, Any]] = None
+    graph_summary: Optional[Dict[str, Any]] = None,
+    activity: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """
     Write the 'best' artifact as YAML or JSON.
-    - YAML: { fitness, rules[, graph_summary] } using the runnable rule format
-    - JSON: { fitness, genes[, graph_summary] } with hex-encoded genes
+    YAML: { fitness, rules[, graph_summary][, activity] }
+    JSON: { fitness, genes[, graph_summary] } (debug; no activity here by default)
     """
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out: Dict[str, str] = {}
@@ -483,23 +521,27 @@ def _write_checkpoint_best(
             }
             if graph_summary:
                 data["graph_summary"] = graph_summary
+            if activity:
+                data["activity"] = activity
+
             p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
                 yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+            out["best"] = str(p)
+            return out
         except Exception:
-            # fallback to JSON if yaml not available
             fmt = "json"
 
-    if fmt == "json":
-        payload = {"fitness": float(fitness), "genes": _genes_to_hex(genes)}
-        if graph_summary:
-            payload["graph_summary"] = graph_summary
-        p = ckpt_dir / "best.json"
-        with open(p, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
-
+    # fallback / JSON path
+    payload = {"fitness": float(fitness), "genes": _genes_to_hex(genes)}
+    if graph_summary:
+        payload["graph_summary"] = graph_summary
+    p = ckpt_dir / "best.json"
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2)
     out["best"] = str(p)
     return out
+
 
 
 
@@ -920,14 +962,34 @@ def evolve(
     best = hof[0]
     paths = {}
 
-    G_best = simulate_genome(list(best), states=states, machine_cfg=machine_cfg)
-    gsum = _graph_summary(G_best, states)
+    # NEW: single simulate_genome call – both graph and activity
+    try:
+        sim = simulate_genome(
+            list(best),
+            states=states,          # use the same states you pass into evolve(...)
+            machine_cfg=machine_cfg,# use the same machine_cfg you pass into evolve(...)
+            collect_activity=True
+        )
+        if isinstance(sim, tuple) and len(sim) == 2:
+            G_best, mask = sim
+        else:
+            G_best, mask = sim, None
+    except Exception:
+        G_best, mask = None, None
+
+    gsum = _graph_summary(G_best, states) if G_best is not None else None
+    activity_yaml = _activity_to_yaml(mask)
+
+
 
     if save_best:
         paths.update(_write_checkpoint_best(
             ckpt_dir, list(best), best.fitness.values[0], fmt, states,
-            full_condition=full_cond, graph_summary=gsum
+            full_condition=full_cond, graph_summary=gsum, activity=activity_yaml
         ))
+
+
+
 
     if save_last:
         last_path = ckpt_dir / "last.json"
