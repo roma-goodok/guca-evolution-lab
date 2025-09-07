@@ -102,10 +102,31 @@ class _MeshBase(PlanarBasic):
     """
     target_face_len: int = 0
     target_interior_deg: int = 0
-
+    
     def __init__(self, *, weights: Optional[MeshWeights] = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        self.weights = weights or MeshWeights()
+        # Coerce dict / OmegaConf DictConfig into MeshWeights with defaults
+        try:
+            from omegaconf import DictConfig, OmegaConf  # soft import
+        except Exception:  # pragma: no cover
+            DictConfig, OmegaConf = None, None  # type: ignore
+
+        w = weights
+        if w is None:
+            self.weights = MeshWeights()
+        elif isinstance(w, MeshWeights):
+            self.weights = w
+        elif DictConfig is not None and isinstance(w, DictConfig):  # type: ignore
+            try:
+                d = OmegaConf.to_container(w, resolve=True)  # type: ignore
+                self.weights = MeshWeights(**(d if isinstance(d, dict) else {}))
+            except Exception:
+                self.weights = MeshWeights()
+        elif isinstance(w, dict):
+            self.weights = MeshWeights(**w)
+        else:
+            # Unknown type → fall back safely
+            self.weights = MeshWeights()
 
     def score(self, G: nx.Graph, meta: Optional[Dict] = None) -> float:
         """Compute the mesh fitness score for graph G."""
