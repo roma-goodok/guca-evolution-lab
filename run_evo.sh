@@ -4,6 +4,7 @@ export ML_LOGBOOK_DIR="logbook"
 
 # grow more structure (more births/connections)
 python -m guca.cli.run_ga_hydra \
+  experiment.name="exp001_gen50" \
   ga.generations=50 ga.pop_size=100 \
   ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
   ga.field.enum_delta_pb=0.25 \
@@ -12,6 +13,85 @@ python -m guca.cli.run_ga_hydra \
   ga.checkpoint.fmt=yaml \
   n_workers=8
 
+python -m guca.cli.run_ga_hydra \
+  experiment.name="exp001_gen500" \
+  ga.selection.method=rank \
+  ga.generations=500 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=50 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+  python -m guca.cli.run_ga_hydra \
+  experiment.name="exp001_gen5000" \
+  ga.selection.method=rank \
+  ga.generations=5000 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=200 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+  python -m guca.cli.run_ga_hydra \
+  experiment.name="exp002_gen500_tournament" \
+  ga.selection.method=tournament ga.tournament_k=3 \
+  ga.generations=500 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=50 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+  python -m guca.cli.run_ga_hydra \
+  experiment.name="exp002_gen5000_tournament" \
+  ga.selection.method=tournament ga.tournament_k=3 \
+  ga.generations=5000 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=200 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+  python -m guca.cli.run_ga_hydra \
+  experiment.name="exp003_gen500_roulette" \
+  ga.selection.method=roulette \
+  ga.generations=500 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=50 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+  python -m guca.cli.run_ga_hydra \
+  experiment.name="exp003_gen500_roulette" \
+  ga.selection.method=roulette \
+  ga.generations=5000 ga.pop_size=100 \
+  ga.structural.insert_pb=0.35 ga.structural.duplicate_pb=0.20 \
+  ga.field.enum_delta_pb=0.25 \
+  machine.max_steps=100 \
+  ga.checkpoint.save_population=best \
+  ga.checkpoint.save_every=200 \
+  ga.checkpoint.fmt=yaml \
+  ga.checkpoint.save_best_png=true \
+  n_workers=8
+
+
 # python -m guca.cli.run_ga_hydra \
 #   ga.generations=1000 ga.pop_size=100 \
 #   ga.structural.insert_pb=0.5 ga.structural.duplicate_pb=0.5 \
@@ -19,7 +99,7 @@ python -m guca.cli.run_ga_hydra \
 #   ga.tournament_k=2 \
 #   ga.elitism=0 \
 #   ga.init_len=1 \
-#   machine.max_steps=20 \
+#   machine.max_steps=100 \
 #   ga.checkpoint.save_population=all \
 #   ga.checkpoint.save_every=100 \
 #   n_workers=12
@@ -31,7 +111,7 @@ python -m guca.cli.run_ga_hydra \
 #   ga.tournament_k=10 \
 #   ga.elitism=0 \
 #   ga.init_len=16 \
-#   machine.max_steps=20 \
+#   machine.max_steps=100 \
 #   ga.checkpoint.save_population=all \
 #   ga.checkpoint.save_every=100 \
 #   n_workers=12

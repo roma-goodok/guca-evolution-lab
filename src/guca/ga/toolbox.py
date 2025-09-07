@@ -740,8 +740,9 @@ def evolve(
         L1, L2 = len(ind1), len(ind2)
         if L1 == 0 or L2 == 0:
             return ind1, ind2
-        c1 = r.randrange(1, L1)  # [1..L1-1]
-        c2 = r.randrange(1, L2)  # [1..L2-1]
+        # Robust cuts: if a parent has length 1, use cut=0 (no-op on that side).
+        c1 = (r.randrange(1, L1) if L1 > 1 else 0)
+        c2 = (r.randrange(1, L2) if L2 > 1 else 0)
 
         child1 = ind1[:c1] + ind2[c2:]
         child2 = ind2[:c2] + ind1[c1:]

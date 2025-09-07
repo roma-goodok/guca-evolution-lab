@@ -8,7 +8,7 @@ experiment:
   inherits: ""   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
-logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/planar_graphs/hex
+logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
 
 # -------- Hydra run/sweep dirs --------
 hydra:
