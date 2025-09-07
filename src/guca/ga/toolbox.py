@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from collections import Counter
 
 
@@ -14,7 +14,8 @@ from deap import base, creator, tools
 from multiprocessing import get_context
 
 from guca.ga.encoding import (
-    Rule, OpKind, encode_rule, decode_gene, random_gene, labels_to_state_maps
+    Rule, OpKind, encode_rule, decode_gene, random_gene, labels_to_state_maps,
+    sanitize_gene
 )
 from guca.ga.operators import splice_cx, make_mutate_fn
 
@@ -250,7 +251,10 @@ def _apply_rules_once(
         if G.has_node(u) and int(G.nodes[u]["state_id"]) != int(sid):
             G.nodes[u]["state_id"] = int(sid)
             changed = True
-
+     
+    # consider structural edits as changes too
+    if (to_add_nodes or to_add_edges or to_remove_edges or to_remove_nodes or state_updates):
+        changed = True
     return changed
 
 

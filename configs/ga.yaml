@@ -38,7 +38,7 @@ machine:
     _target_: guca.engine.config.NearestSearchCfg
     max_depth: 5
     tie_breaker: stable
-    connect_all: all
+    connect_all: true
 
 # -------- Fitness (choose ONE; comment others) --------
 
@@ -117,10 +117,10 @@ ga:
     duplicate_head_pb: 0.20
 
   encoding:
-    sanitize_on_decode: false   # default off (C#-style)
+    sanitize_on_decode: true   # default off (C#-style)
     enforce_semantics: false    # only used if sanitize_on_decode: true
     canonicalize_flags: false
-    enforce_bounds_order: false
+    enforce_bounds_order: true
 
 
   # Core GA parameters
