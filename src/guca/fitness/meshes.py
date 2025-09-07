@@ -261,3 +261,121 @@ class HexMesh(_MeshBase):
                 w_internal=0.30, w_size=0.20, size_cap=10,
             )
         super().__init__(weights=weights, **kwargs)
+
+# --- C#-parity triangle fitness ---------------------------------------------
+
+@dataclass
+class TriangleLegacyWeights:
+    shell_vertex_weight: float = 0.5       # legacy-UI-aligned default (helps monotonicity)
+    genome_len_bonus: bool = False
+    use_unique_shell_nodes: bool = True    # NEW: penalize by unique boundary vertices
+    tri_eps: float = 1e-3                  # NEW: tiny bias so more triangles always wins
+
+class TriangleMeshLegacyCS(PlanarBasic):
+    """
+    Legacy C#-aligned triangle fitness.
+
+    Gates (C#):
+      - V == 1                -> 0.0
+      - V >= max_vertices     -> 0.1
+      - diverged (steps>=...) -> 0.9
+      - nonplanar             -> 0.3
+    Then:
+      if V <= 2                  -> 1.0
+      if #faces == 1             -> 1.01
+      if not biconnected         -> 1.02
+      if max_degree > 6          -> 1.03
+      else:
+        result = 2 * (#tri_faces_interior_adj)
+               +  (#interior vertices with deg==6)
+               - shell_weight * |shell|
+               - V
+               + 20
+      * When outer face has length 3, exclude it from the tri-face count (C# quirk).
+    """
+
+    def __init__(self, *, weights: Optional[TriangleLegacyWeights] = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.w = weights or TriangleLegacyWeights()
+
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None) -> float:
+        vr = self.viability_filter(G, meta)
+        if not vr.viable:
+            return vr.base_score
+
+        GG = self.prepare_graph(G)
+        nV = GG.number_of_nodes()
+        if nV <= 2:
+            return 1.0
+
+        emb = self.compute_embedding_info(GG)
+        faces_all = emb.faces
+
+        # cyclomatic number to distinguish tree vs cycle when faces==1
+        m = GG.number_of_edges()
+        try:
+            import networkx as nx
+            c = nx.number_connected_components(GG)
+        except Exception:
+            c = 1
+        mu = m - nV + c
+
+        # Only trees with one face get the 1.01 early return
+        if len(faces_all) == 1 and mu == 0:
+            return 1.01
+
+        # biconnected gate (offshoots down-weighted)
+        try:
+            import networkx as nx
+            if not nx.is_biconnected(GG):
+                return 1.02
+        except Exception:
+            pass
+
+        # degree cap
+        degs = [d for _, d in GG.degree()]
+        if degs and max(degs) > 6:
+            return 1.03
+
+
+        # --- triangle count ---
+        # Robust: count all 3-cycles (topological triangles) in the graph
+        # and then subtract 1 iff the outer face (shell) is itself a triangle
+        try:
+            tri_map = nx.triangles(GG)          # counts per node; each tri counted at each of its 3 vertices
+            tri_all = sum(tri_map.values()) // 3
+        except Exception:
+            # Fallback: face-based count if triangles() unavailable
+            tri_all = sum(1 for f in faces_all if len(f) == 3)
+
+        tri_count = tri_all - (1 if len(emb.shell) == 3 else 0)
+        if tri_count < 0:
+            tri_count = 0
+                      
+
+        # interior degree==6 count
+        interior = emb.interior_nodes
+        interior_deg6 = sum(1 for v in interior if GG.degree(v) == 6)
+
+        # unique boundary vertices for shell penalty
+        shell_count = len(emb.shell_nodes)
+        if shell_count < 0 or shell_count > nV:
+            shell_count = min(max(shell_count, 0), nV)
+        
+        score = (
+            2.0 * tri_count
+            + float(interior_deg6)
+            - 0.5 * float(shell_count)
+            - float(nV)
+            + 20.0
+            + 1e-3 * float(tri_count)
+        )        
+
+        if self.w.genome_len_bonus:
+            gl = _infer_genome_len(meta)
+            if gl and gl > 0:
+                score += 1.0 / gl
+
+        return float(score)
+
+

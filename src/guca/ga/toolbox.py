@@ -546,21 +546,28 @@ def _write_checkpoint_best(
     out["best"] = str(p)
     return out
 
-
-
-
 def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
     """
     Build a compact summary identical in shape to run_gum:
     { "edges": int, "nodes": int, "states_count": {label: count, ...} }
+    Additionally, when the graph is small (edges < 20), include a sorted 'edge_list'
+    of undirected pairs for convenience.
     """
     counts = Counter(states[int(G.nodes[n].get("state_id", 0))] for n in G.nodes())
-    return {
-        "edges": int(G.number_of_edges()),
+    e = int(G.number_of_edges())
+    summary = {
+        "edges": e,
         "nodes": int(G.number_of_nodes()),
         "states_count": dict(counts),
     }
-
+    if e < 20:
+        # produce a stable, sorted list of undirected edges as [u, v] pairs
+        edge_list = sorted(
+            [ [int(min(u, v)), int(max(u, v))] for (u, v) in G.edges() ],
+            key=lambda uv: (uv[0], uv[1])
+        )
+        summary["edge_list"] = edge_list
+    return summary
 
 
 def _render_best_png_inproc(

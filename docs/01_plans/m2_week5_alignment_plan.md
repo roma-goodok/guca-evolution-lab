@@ -142,9 +142,11 @@ _All tests pass under fixed RNG seeds._
 
 ## ⚠️ Remaining items / next wave (Week 5+)
 
-- **Full condition semantics in the engine:** make all predicate fields effective
+- [x] **Full condition semantics in the engine:** make all predicate fields effective
   (prior state, conn_GE/LE, parents_GE/LE) in rule matching during simulation.
-- **Quad/Hex fitness tuning:** revisit weights and forbidden‑faces for stronger signal vs triangles.
+- [ ] TriangleMesh fitness alignment against the C# outputs (fine‑tuning weights where needed once rules are fully expressive).
+- [ ] Integrate activity mask from engine into the GA loop after each eval (we can set ind.active_mask using the mask returned by simulate_genome(..., collect_activity=True) to bias the next generation automatically).
+- [ ] **Quad/Hex fitness tuning:** revisit weights and forbidden‑faces for stronger signal vs triangles.
 - **Experiment sweeps:** Hydra‑based grids for (selection × cx × mutation) sensitivity; export plots.
 - **Optional:** record per‑generation best PNGs (`epoch_*.png`) when `save_every > 0` for visual progress.
 

@@ -42,55 +42,29 @@ machine:
 
 # -------- Fitness (choose ONE; comment others) --------
 
-# # Mesh: Hex
-# fitness:
-#   _target_: guca.fitness.meshes.HexMesh
-#   weights:
-#     _target_: guca.fitness.meshes.MeshWeights
-#     w_face: 1.0
-#     w_deg: 0.6
-#     w_shell: 0.4
-#     w_nontarget: 0.5
-#     w_internal: 0.30
-#     w_size: 0.20
-#     size_cap: 10
-#     target_presence_bonus: 1.6
-#     w_forbidden_faces: {3: 0.8}
-
+# Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMesh
+  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  # You can tweak the shell penalty like in C#:
   weights:
-    disconnected_mul: 0.05
-    forest_cap_min: 1.05
-    forest_ceiling: 1.19
-    forest_size_bonus: 0.08
-    forest_size_ref_n: 12
-    cycle_floor: 1.21
-    cycle_eps: 0.001
+    _target_: guca.fitness.meshes.TriangleLegacyWeights
+    shell_vertex_weight: 0.5
+    genome_len_bonus: false
+    use_unique_shell_nodes: true    # NEW: penalize by unique boundary vertices
+    tri_eps: 0.001      
 
 
-# # Mesh: Quad
 # fitness:
-#   _target_: guca.fitness.meshes.QuadMesh
+#   _target_: guca.fitness.meshes.TriangleMesh
 #   weights:
-#     _target_: guca.fitness.meshes.MeshWeights
+#     disconnected_mul: 0.05
+#     forest_cap_min: 1.05
+#     forest_ceiling: 1.19
+#     forest_size_bonus: 0.08
+#     forest_size_ref_n: 12
+#     cycle_floor: 1.21
+#     cycle_eps: 0.001
 
-# # BySample from a target patch (factory class)
-# fitness:
-#   _target_: guca.fitness.factory.BySampleFromTarget
-#   target_family: tri     # tri | quad | hex
-#   faces: 6
-#   tri_kind: block
-#   hex_kind: block
-#   rows: 2
-#   cols: 2
-#   weights:
-#     _target_: guca.fitness.by_sample.BySampleWeights
-#     smoothing: 0.0
-#     w_shell: 0.4
-#     w_internal: 0.30
-#     w_size: 0.20
-#     size_cap: 10
 
 # -------- GA runner (toolbox+loop wired internally) --------
 ga:
@@ -132,7 +106,7 @@ ga:
   elitism: 2
 
   # Genome length bounds & initialization
-  init_len: 6
+  init_len: 128
   min_len: 1
   max_len: 256
 
