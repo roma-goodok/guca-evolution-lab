@@ -296,6 +296,12 @@ def tri_hex2():
               (5,3),(4,3),(4,5),(5,6),(6,4),
               (6,0),(1,5), (0,7)])
 
+@case("7 triangles as hexagone + 1 triangle ")
+def tri_hex2():
+    return G([(0,1),(1,2),(2,5),(0,5),(2,3),
+              (5,3),(4,3),(4,5),(5,6),(6,4),
+              (6,0),(1,5), (0,7), (7,1)])
+
 
 @case("3 triangles as line ")
 def tri_line1():

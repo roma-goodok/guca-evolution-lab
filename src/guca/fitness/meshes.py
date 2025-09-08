@@ -270,6 +270,8 @@ class TriangleLegacyWeights:
     genome_len_bonus: bool = False
     use_unique_shell_nodes: bool = True    # NEW: penalize by unique boundary vertices
     tri_eps: float = 1e-3                  # NEW: tiny bias so more triangles always wins
+    tri_face_weight: float = 2.601         # was hard-coded as 2.001
+    vertex_penalty_weight: float = 0.75     # was hard-coded as 1.0 (per-node penalty)
 
 class TriangleMeshLegacyCS(PlanarBasic):
     """
@@ -374,14 +376,19 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if shell_count < 0 or shell_count > nV:
             shell_count = min(max(shell_count, 0), nV)
                
+        # weights (configurable; defaults keep old behavior)
+        tri_w   = float(self.w.tri_face_weight)
+        shell_w = float(self.w.shell_vertex_weight)
+        node_w  = float(self.w.vertex_penalty_weight)
+
         score = (
-            2.001 * tri_count
+            tri_w * tri_count
             + float(interior_deg6)
-            - 0.5 * float(shell_count)
-            - float(nV)
+            - shell_w * float(shell_count)
+            - node_w * float(nV)
             + 20.0
-            #+ 1e-3 * float(tri_count)
-        ) 
+        )
+
 
         if self.w.genome_len_bonus:
             gl = _infer_genome_len(meta)
