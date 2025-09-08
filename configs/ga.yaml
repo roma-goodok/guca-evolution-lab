@@ -45,13 +45,13 @@ machine:
 # Triangle fitness – C# legacy aligned
 fitness:
   _target_: guca.fitness.meshes.TriangleMeshLegacyCS
-  # You can tweak the shell penalty like in C#:
   weights:
     _target_: guca.fitness.meshes.TriangleLegacyWeights
+    tri_face_weight: 2.6
+    vertex_penalty_weight: 0.75
     shell_vertex_weight: 0.5
-    genome_len_bonus: false
-    use_unique_shell_nodes: true    # NEW: penalize by unique boundary vertices
-    tri_eps: 0.001      
+    use_unique_shell_nodes: true
+ 
 
 
 # fitness:
