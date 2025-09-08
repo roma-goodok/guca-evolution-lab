@@ -146,8 +146,40 @@ class PlanarBasic:
     # Helpers — face extraction
     # --------------------
     @staticmethod
+    def _simplify_face_cycle(cyc: List[Hash]) -> List[Hash]:
+        """
+        Make a DCEL-traversed face a simple polygon without over-merging:
+        - drop closing duplicate,
+        - collapse immediate duplicates,
+        - remove only *local* backtracks a,b,a -> a.
+        """
+        s = list(cyc)
+        # drop closing duplicate
+        if len(s) > 1 and s[0] == s[-1]:
+            s = s[:-1]
+
+        # collapse immediate duplicates
+        t: List[Hash] = []
+        for v in s:
+            if not t or t[-1] != v:
+                t.append(v)
+        s = t
+
+        # remove local backtracks a,b,a
+        i = 0
+        while i + 2 < len(s):
+            if s[i] == s[i + 2]:
+                # delete middle 'b' and the second 'a'; keep the first 'a'
+                del s[i + 1:i + 3]
+                if i > 0:
+                    i -= 1
+            else:
+                i += 1
+
+        return s
+
+    @staticmethod
     def _faces_from_embedding(G: nx.Graph, emb) -> List[List[Hash]]:
-        """Enumerate faces from a NetworkX PlanarEmbedding via left-face traversal."""
         faces: List[List[Hash]] = []
         visited: Set[Tuple[Hash, Hash]] = set()
         for u in emb:
@@ -160,13 +192,12 @@ class PlanarBasic:
                     continue
                 if len(cycle) >= 2:
                     for i in range(len(cycle)):
-                        a = cycle[i]
-                        b = cycle[(i + 1) % len(cycle)]
+                        a = cycle[i]; b = cycle[(i + 1) % len(cycle)]
                         visited.add((a, b))
-                    # normalize: We want node cycles without repeating the first at the end
-                    if cycle and cycle[0] == cycle[-1]:
-                        cycle = cycle[:-1]
-                    faces.append(cycle)
+                    # keep only proper polygons
+                    cycle = PlanarBasic._simplify_face_cycle(cycle)
+                    if len(cycle) >= 3:
+                        faces.append(cycle)
         return faces
 
     @staticmethod
@@ -223,8 +254,9 @@ class PlanarBasic:
                     if (a, b) == (u, v):
                         break
 
+                face = PlanarBasic._simplify_face_cycle(face)
                 if len(face) >= 3:
-                    faces.append(face)
+                    faces.append(face)                
 
         return faces
 

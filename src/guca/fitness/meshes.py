@@ -337,20 +337,32 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if degs and max(degs) > 6:
             return 1.03
 
+        
+        # --- triangle count (faces + chord-triangles inside non-tri faces) ---
+        # 1) count explicit triangular faces
+        tri_faces: set[frozenset] = {
+            frozenset(f) for f in faces_all if len(f) == 3
+        }
 
-        # --- triangle count ---
-        # Robust: count all 3-cycles (topological triangles) in the graph
-        # and then subtract 1 iff the outer face (shell) is itself a triangle
-        try:
-            tri_map = nx.triangles(GG)          # counts per node; each tri counted at each of its 3 vertices
-            tri_all = sum(tri_map.values()) // 3
-        except Exception:
-            # Fallback: face-based count if triangles() unavailable
-            tri_all = sum(1 for f in faces_all if len(f) == 3)
+        # 2) recover triangles that a non-tri face would split along an existing chord
+        #    sliding triples (a,b,c) along the face boundary; if (a,c) is an edge, {a,b,c} is a triangle in G
+        for face in faces_all:
+            L = len(face)
+            if L >= 4:
+                for i in range(L):
+                    a = face[i]
+                    b = face[(i + 1) % L]
+                    c = face[(i + 2) % L]
+                    if GG.has_edge(a, c):
+                        tri_faces.add(frozenset((a, b, c)))
 
-        tri_count = tri_all - (1 if len(emb.shell) == 3 else 0)
-        if tri_count < 0:
-            tri_count = 0
+        # Legacy quirk: discount a triangular outer shell if present
+        if len(emb.shell) == 3:
+            tri_faces.discard(frozenset(emb.shell))
+
+        tri_count = max(0, len(tri_faces))
+
+
                       
 
         # interior degree==6 count
@@ -380,7 +392,7 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if verbose:
             print("\n---")
             print("faces_all:", faces_all)
-            print("tri_all:", tri_all, "tri_count:", tri_count)
+            print("tri_count:", tri_count)
             print("interior:", sorted(interior), "interior_deg6:", interior_deg6)
             print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)            
             print("score:", float(score))
