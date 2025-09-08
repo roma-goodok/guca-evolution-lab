@@ -324,13 +324,13 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if len(faces_all) == 1 and mu == 0:
             return 1.01
 
-        # biconnected gate (offshoots down-weighted)
-        try:
-            import networkx as nx
-            if not nx.is_biconnected(GG):
-                return 1.02
-        except Exception:
-            pass
+        # # biconnected gate (offshoots down-weighted)
+        # try:
+        #     import networkx as nx
+        #     if not nx.is_biconnected(GG):
+        #         return 1.02
+        # except Exception:
+        #     pass
 
         # degree cap
         degs = [d for _, d in GG.degree()]

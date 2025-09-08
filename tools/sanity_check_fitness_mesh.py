@@ -239,29 +239,51 @@ f = TriangleMeshLegacyCS()
 
 
 def _tri20():
-    # Triangles: (0,1,2), (1,2,3), (2,3,4)
     G = nx.Graph()
     G.add_edges_from([(0,1),(1,2),(2,0),
                       (0,3),(1,3),
-                      (2,2)])
+                      (2,3)])
     return G
 
-#tri20 = nx.Graph()
-#tri20 = G.add_edges_from([(0,1),(1,2),(2,0),(0,3),(1,3), (2,3)])
 tri20 = _tri20()
 print_graph_summary(tri20, "tri20")
 print("tri20:", f.score(tri20))
 
 def _tri21():
-    # Triangles: (0,1,2), (1,2,3), (2,3,4)
     G = nx.Graph()
     G.add_edges_from([(0,1),(0,2),(0,3),
                       (1,2),(1,3),
                       (2,3)])
     return G
 
-#tri20 = nx.Graph()
-#tri20 = G.add_edges_from([(0,1),(1,2),(2,0),(0,3),(1,3), (2,3)])
+
 tri21 = _tri21()
-print_graph_summary(tri20, "tri21")
+print_graph_summary(tri21, "tri21")
 print("tri21:", f.score(tri21))
+
+
+def _tri22():
+    G = nx.Graph()
+    G.add_edges_from([(0,1),(1,2),(0,2),
+                      (0,3),(1,3),
+                      (2,3),
+                      (1,4), (3,4)])
+    return G
+
+
+tri22 = _tri22()
+print_graph_summary(tri22, "tri22")
+print("tri22:", f.score(tri22))
+
+def _tri23():
+    G = nx.Graph()
+    G.add_edges_from([(0,1),(1,2),(0,2),
+                      (0,3),(1,3),
+                      (2,3),
+                      (1,4), (3,4), (4,5)])
+    return G
+
+
+tri23 = _tri23()
+print_graph_summary(tri23, "tri23")
+print("tri23:", f.score(tri23))
