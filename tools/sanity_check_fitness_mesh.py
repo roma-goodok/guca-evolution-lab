@@ -7,7 +7,7 @@ import random
 def print_graph_summary(G: nx.Graph, title: str = ""):
     edges = sorted((int(min(u, v)), int(max(u, v))) for (u, v) in G.edges())
     if title:
-        print(title)
+        print("### ", title, " ###")
     print(f"nodes: {G.number_of_nodes()}  edges: {G.number_of_edges()}")
     print(f"edge_list: {edges}\n")
 
@@ -226,64 +226,129 @@ def test_25_more_adjacent_triangles_scores_higher():
 
 print("TriangleMeshLegacyCS:")
 
-f = TriangleMeshLegacyCS()    
-# two = _two_adjacent_triangles()
-# print_graph_summary(two, "_two_adjacent_triangles")
-# print("score:", f.score(two))
+import networkx as nx
+from collections import OrderedDict
+from guca.fitness.meshes import TriangleMeshLegacyCS
 
-# three = _strip_of_three_adjacent_triangles()    
-# print_graph_summary(three, "_strip_of_three_adjacent_triangles")
-# print("score:", f.score(three))
-# assert f.score(three) > f.score(two)
-# f.score(three)
+# optional: reuse your existing helper
+# from tools.sanity_check_fitness_mesh import print_graph_summary
+
+REGISTRY: "OrderedDict[str, callable]" = OrderedDict()
+
+def case(name: str):
+    def _wrap(fn):
+        REGISTRY[name] = fn
+        return fn
+    return _wrap
+
+def G(edges):
+    g = nx.Graph(); g.add_edges_from(edges); return g
+
+@case("tri20")
+def tri20():
+    return G([(0,1),(1,2),(2,0),
+              (0,3),(1,3),
+              (2,3)])
+
+@case("3 triangles as triangle")
+def tri21():
+    return G([(0,1),(0,2),(0,3),
+              (1,2),(1,3),
+              (2,3)])
+
+@case("4 triangles")
+def tri22():
+    return G([(0,1),(1,2),(0,2),
+              (0,3),(1,3),
+              (2,3),
+              (1,4),(3,4)])
+
+@case("4 triangles and tree")
+def tri23():
+    return G([(0,1),(1,2),(0,2),
+              (0,3),(1,3),
+              (2,3),
+              (1,4),(3,4),(4,5)])
+@case("4 triangles as quad")
+def tri_quad1():
+    return G([(0,1),(0,4),(1,4),(1,2),(4,2),
+              (3,2),(3,4),(3,0)])
+
+@case("4 triangles as quad + 1 tree edge")
+def tri_quad2():
+    return G([(0,1),(0,4),(1,4),(1,2),(4,2),
+              (3,2),(3,4),(3,0), (0,5)])
+
+@case("5 (4 triangles as quad + 1 triangle)")
+def tri_quad3():
+    return G([(0,1),(0,4),(1,4),(1,2),(4,2),
+              (3,2),(3,4),(3,0), (0,5), (5,3)])
+
+@case("6 triangles as hexagone")
+def tri_hex1():
+    return G([(0,1),(1,2),(2,5),(0,5),(2,3),
+              (5,3),(4,3),(4,5),(5,6),(6,4),
+              (6,0),(1,5)])
+
+@case("6 triangles as hexagone + 1 tree edge")
+def tri_hex2():
+    return G([(0,1),(1,2),(2,5),(0,5),(2,3),
+              (5,3),(4,3),(4,5),(5,6),(6,4),
+              (6,0),(1,5), (0,7)])
 
 
-def _tri20():
-    G = nx.Graph()
-    G.add_edges_from([(0,1),(1,2),(2,0),
-                      (0,3),(1,3),
-                      (2,3)])
-    return G
+@case("3 triangles as line ")
+def tri_line1():
+    return G([(0,1),(1,2),(0,2),(1,3),(1,4),
+              (4,3), (2,3)])
 
-tri20 = _tri20()
-print_graph_summary(tri20, "tri20")
-print("tri20:", f.score(tri20))
+@case("4 triangles as line ")
+def tri_line2():
+    return G([(0,1),(1,2),(0,2),(1,3),(1,4),
+              (4,3), (2,3), (3,5), (4,5)])
 
-def _tri21():
-    G = nx.Graph()
-    G.add_edges_from([(0,1),(0,2),(0,3),
-                      (1,2),(1,3),
-                      (2,3)])
-    return G
-
-
-tri21 = _tri21()
-print_graph_summary(tri21, "tri21")
-print("tri21:", f.score(tri21))
+@case("5 triangles as line ")
+def tri_line3():
+    return G([(0,1),(1,2),(0,2),(1,3),(1,4),
+              (4,3), (2,3), (3,5), (4,5), (6,4), (6,5)])
+@case("6 triangles as line ")
+def tri_line3():
+    return G([(0,1),(1,2),(0,2),(1,3),(1,4),
+              (4,3), (2,3), (3,5), (4,5), (6,4), (6,5), (7,5), (7,6)])
 
 
-def _tri22():
-    G = nx.Graph()
-    G.add_edges_from([(0,1),(1,2),(0,2),
-                      (0,3),(1,3),
-                      (2,3),
-                      (1,4), (3,4)])
-    return G
+@case("6 triangles and 2 bridges (3 triangles - 2 triangles - 1 triangle ")
+def tri_brindge1():
+    return G([(0,1),(1,2),(0,2),(1,3),(2,3),
+              (4,1),(4,3),(5,4),(5,7),(5,6),
+              (8,7),(8,6),(8,9),(9,10),(9,11),
+              (10,11),(7,6),])  
+              
 
 
-tri22 = _tri22()
-print_graph_summary(tri22, "tri22")
-print("tri22:", f.score(tri22))
 
-def _tri23():
-    G = nx.Graph()
-    G.add_edges_from([(0,1),(1,2),(0,2),
-                      (0,3),(1,3),
-                      (2,3),
-                      (1,4), (3,4), (4,5)])
-    return G
+def assert_order(results, *names_desc):
+    lookup = {n: s for n, s, _ in results}
+    for a, b in zip(names_desc, names_desc[1:]):
+        assert lookup[a] > lookup[b], f"Expected {a} > {b}, got {lookup[a]} <= {lookup[b]}"
 
+def run_cases(scorer: TriangleMeshLegacyCS, *, show_summary=True, rank=True, precision=3, verbose=False):
+    results = []
+    for name, build in REGISTRY.items():
+        g = build()
+        if show_summary:
+            print_graph_summary(g, name)
+        s = float(scorer.score(g, verbose=verbose))  # <-- verbose toggle
+        print(f"{name}: {s:.{precision}f}\n")
+        results.append((name, s, g))
+    if rank:
+        results.sort(key=lambda t: t[1], reverse=True)
+        print("\n# Ranked by score")
+        for name, s, _ in results:
+            print(f"{name}: {s:.{precision}f}")
+    return results
 
-tri23 = _tri23()
-print_graph_summary(tri23, "tri23")
-print("tri23:", f.score(tri23))
+# Usage
+f = TriangleMeshLegacyCS()
+res = run_cases(f, show_summary=True, rank=True, verbose=True)
+# assert_order(res, "tri23", "tri22", "tri21", "tri20")  # optional

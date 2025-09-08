@@ -298,7 +298,7 @@ class TriangleMeshLegacyCS(PlanarBasic):
         super().__init__(**kwargs)
         self.w = weights or TriangleLegacyWeights()
 
-    def score(self, G: nx.Graph, meta: Optional[Dict] = None) -> float:
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *, verbose: bool = False) -> float:
         vr = self.viability_filter(G, meta)
         if not vr.viable:
             return vr.base_score
@@ -361,20 +361,29 @@ class TriangleMeshLegacyCS(PlanarBasic):
         shell_count = len(emb.shell_nodes)
         if shell_count < 0 or shell_count > nV:
             shell_count = min(max(shell_count, 0), nV)
-        
+               
         score = (
-            2.0 * tri_count
+            2.001 * tri_count
             + float(interior_deg6)
             - 0.5 * float(shell_count)
             - float(nV)
             + 20.0
-            + 1e-3 * float(tri_count)
-        )        
+            #+ 1e-3 * float(tri_count)
+        ) 
 
         if self.w.genome_len_bonus:
             gl = _infer_genome_len(meta)
             if gl and gl > 0:
                 score += 1.0 / gl
+
+
+        if verbose:
+            print("\n---")
+            print("faces_all:", faces_all)
+            print("tri_all:", tri_all, "tri_count:", tri_count)
+            print("interior:", sorted(interior), "interior_deg6:", interior_deg6)
+            print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)            
+            print("score:", float(score))
 
         return float(score)
 

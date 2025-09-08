@@ -560,7 +560,7 @@ def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
         "nodes": int(G.number_of_nodes()),
         "states_count": dict(counts),
     }
-    if e < 20:
+    if e < 1000:
         # produce a stable, sorted list of undirected edges as [u, v] pairs
         edge_list = sorted(
             [ [int(min(u, v)), int(max(u, v))] for (u, v) in G.edges() ],
