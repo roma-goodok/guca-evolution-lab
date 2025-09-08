@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set
+from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
 from collections import Counter
 
 
@@ -14,7 +14,8 @@ from deap import base, creator, tools
 from multiprocessing import get_context
 
 from guca.ga.encoding import (
-    Rule, OpKind, encode_rule, decode_gene, random_gene, labels_to_state_maps
+    Rule, OpKind, encode_rule, decode_gene, random_gene, labels_to_state_maps,
+    sanitize_gene
 )
 from guca.ga.operators import splice_cx, make_mutate_fn
 
@@ -250,7 +251,10 @@ def _apply_rules_once(
         if G.has_node(u) and int(G.nodes[u]["state_id"]) != int(sid):
             G.nodes[u]["state_id"] = int(sid)
             changed = True
-
+     
+    # consider structural edits as changes too
+    if (to_add_nodes or to_add_edges or to_remove_edges or to_remove_nodes or state_updates):
+        changed = True
     return changed
 
 
@@ -425,45 +429,72 @@ def _genes_to_yaml_rules(
 ) -> List[Dict[str, Any]]:
     """
     Convert encoded genes to YAML-rule dicts.
-    If full_condition=True, include a 'condition_meta' block with **actual values**
-    for predicates (prior, conn_ge/le, parents_ge/le).
+    If full_condition=True, include a 'condition_meta' block populated from decode_gene.
     """
     out: List[Dict[str, Any]] = []
+    n_states = max(1, len(states))
     for g in genes:
-        r = decode_gene(g, state_count=len(states))
-        cur = states[int(r.cond_current)]
-        op = r.op_kind.name
-        operand = None if r.operand is None else states[int(r.operand)]
+        r = decode_gene(g, state_count=n_states)
 
-        if full_condition:
-            cond_meta: Dict[str, Any] = {
-                "prior": None if r.prior is None else states[int(r.prior)],
-                "conn_ge": r.conn_ge,
-                "conn_le": r.conn_le,
-                "parents_ge": r.parents_ge,
-                "parents_le": r.parents_le,
-            }
-            row = {
-                "condition": {"current": cur},
-                "condition_meta": cond_meta,
-                "op": {"kind": op},
-            }
-        else:
-            row = {"condition": {"current": cur}, "op": {"kind": op}}
+        cur = states[int(r.cond_current) % n_states]
+        op_name = r.op_kind.name
+        operand = None
+        if getattr(r, "operand", None) is not None:
+            operand = states[int(r.operand) % n_states]
 
+        row: Dict[str, Any] = {"condition": {"current": cur}, "op": {"kind": op_name}}
         if operand is not None:
             row["op"]["operand"] = operand
+
+        if full_condition:
+            # decode_gene exposes semantic fields; map to human-readable YAML
+            prior = getattr(r, "prior", None)
+            if prior is not None:
+                prior = states[int(prior) % n_states]
+
+            row["condition_meta"] = {
+                "prior": prior,  # state label or null
+                "conn_ge": getattr(r, "conn_ge", None),
+                "conn_le": getattr(r, "conn_le", None),
+                "parents_ge": getattr(r, "parents_ge", None),
+                "parents_le": getattr(r, "parents_le", None),
+            }
 
         out.append(row)
     return out
 
+def _activity_scheme(mask: Sequence[bool]) -> str:
+    """
+    Compact, legacy-like visualization:
+    - numbers for consecutive inactive runs
+    - 'x' for each active gene
+    Example: [F,F,T,T,F] -> '2xx1'
+    """
+    if not mask:
+        return ""
+    parts: List[str] = []
+    inactive_run = 0
+    for m in mask:
+        if m:
+            if inactive_run > 0:
+                parts.append(str(inactive_run))
+                inactive_run = 0
+            parts.append("x")
+        else:
+            inactive_run += 1
+    if inactive_run > 0:
+        parts.append(str(inactive_run))
+    return "".join(parts)
 
-
-
-
-
-
-
+def _activity_to_yaml(mask: Optional[Sequence[bool]]) -> Optional[Dict[str, Any]]:
+    if mask is None:
+        return None
+    mask_list = [bool(x) for x in mask]
+    return {
+        "mask": mask_list,
+        "active_count": int(sum(mask_list)),
+        "scheme": _activity_scheme(mask_list),
+    }
 
 
 def _write_checkpoint_best(
@@ -474,12 +505,13 @@ def _write_checkpoint_best(
     states: List[str],
     *,
     full_condition: bool = False,
-    graph_summary: Optional[Dict[str, Any]] = None
+    graph_summary: Optional[Dict[str, Any]] = None,
+    activity: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, str]:
     """
     Write the 'best' artifact as YAML or JSON.
-    - YAML: { fitness, rules[, graph_summary] } using the runnable rule format
-    - JSON: { fitness, genes[, graph_summary] } with hex-encoded genes
+    YAML: { fitness, rules[, graph_summary][, activity] }
+    JSON: { fitness, genes[, graph_summary] } (debug; no activity here by default)
     """
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     out: Dict[str, str] = {}
@@ -491,42 +523,51 @@ def _write_checkpoint_best(
                 "fitness": float(fitness),
                 "rules": _genes_to_yaml_rules(genes, states, full_condition=full_condition),
             }
-            if graph_summary is not None:
+            if graph_summary:
                 data["graph_summary"] = graph_summary
+            if activity:
+                data["activity"] = activity
+
             p = ckpt_dir / "best.yaml"
             with open(p, "w", encoding="utf-8") as f:
-                yaml.safe_dump(data, f, sort_keys=False)
+                yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
             out["best"] = str(p)
             return out
-        except Exception as e:
-            print(f"[WARN] YAML requested but unavailable ({e}); falling back to JSON.")
+        except Exception:
+            fmt = "json"
 
-    # JSON fallback
-    p = ckpt_dir / "best.json"
-    payload: Dict[str, Any] = {
-        "fitness": float(fitness),
-        "genes": _genes_to_hex(genes),
-    }
-    if graph_summary is not None:
+    # fallback / JSON path
+    payload = {"fitness": float(fitness), "genes": _genes_to_hex(genes)}
+    if graph_summary:
         payload["graph_summary"] = graph_summary
+    p = ckpt_dir / "best.json"
     with open(p, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
     out["best"] = str(p)
     return out
 
-
 def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
     """
     Build a compact summary identical in shape to run_gum:
     { "edges": int, "nodes": int, "states_count": {label: count, ...} }
+    Additionally, when the graph is small (edges < 20), include a sorted 'edge_list'
+    of undirected pairs for convenience.
     """
     counts = Counter(states[int(G.nodes[n].get("state_id", 0))] for n in G.nodes())
-    return {
-        "edges": int(G.number_of_edges()),
+    e = int(G.number_of_edges())
+    summary = {
+        "edges": e,
         "nodes": int(G.number_of_nodes()),
         "states_count": dict(counts),
     }
-
+    if e < 1000:
+        # produce a stable, sorted list of undirected edges as [u, v] pairs
+        edge_list = sorted(
+            [ [int(min(u, v)), int(max(u, v))] for (u, v) in G.edges() ],
+            key=lambda uv: (uv[0], uv[1])
+        )
+        summary["edge_list"] = edge_list
+    return summary
 
 
 def _render_best_png_inproc(
@@ -706,8 +747,9 @@ def evolve(
         L1, L2 = len(ind1), len(ind2)
         if L1 == 0 or L2 == 0:
             return ind1, ind2
-        c1 = r.randrange(1, L1)  # [1..L1-1]
-        c2 = r.randrange(1, L2)  # [1..L2-1]
+        # Robust cuts: if a parent has length 1, use cut=0 (no-op on that side).
+        c1 = (r.randrange(1, L1) if L1 > 1 else 0)
+        c2 = (r.randrange(1, L2) if L2 > 1 else 0)
 
         child1 = ind1[:c1] + ind2[c2:]
         child2 = ind2[:c2] + ind1[c1:]
@@ -815,19 +857,23 @@ def evolve(
     ckpt = checkpoint_cfg or {}
     ckpt_dir = (run_dir / ckpt.get("out_dir", "checkpoints"))
     fmt = str(ckpt.get("fmt", "json")).lower()
+
+    # parse checkpoint options
     save_best = bool(ckpt.get("save_best", True))
     save_last = bool(ckpt.get("save_last", True))
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
     full_cond = bool(ckpt.get("export_full_condition_shape", False))
-    save_best_png = bool(ckpt.get("save_best_png", False))
-
+    save_best_png = bool(ckpt.get("save_best_png", False))    
 
 
     # initial checkpoints (generation 0)
     hof.update(pop)
     best0 = hof[0]    
+    
     _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states, full_condition=full_cond)
+
+
     if save_population in ("best", "all"):
         _write_checkpoint_pop(ckpt_dir, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop], save_population)
     if save_every and save_every > 0:
@@ -928,14 +974,34 @@ def evolve(
     best = hof[0]
     paths = {}
 
-    G_best = simulate_genome(list(best), states=states, machine_cfg=machine_cfg)
-    gsum = _graph_summary(G_best, states)
+    # NEW: single simulate_genome call – both graph and activity
+    try:
+        sim = simulate_genome(
+            list(best),
+            states=states,          # use the same states you pass into evolve(...)
+            machine_cfg=machine_cfg,# use the same machine_cfg you pass into evolve(...)
+            collect_activity=True
+        )
+        if isinstance(sim, tuple) and len(sim) == 2:
+            G_best, mask = sim
+        else:
+            G_best, mask = sim, None
+    except Exception:
+        G_best, mask = None, None
+
+    gsum = _graph_summary(G_best, states) if G_best is not None else None
+    activity_yaml = _activity_to_yaml(mask)
+
+
 
     if save_best:
         paths.update(_write_checkpoint_best(
             ckpt_dir, list(best), best.fitness.values[0], fmt, states,
-            graph_summary=gsum
+            full_condition=full_cond, graph_summary=gsum, activity=activity_yaml
         ))
+
+
+
 
     if save_last:
         last_path = ckpt_dir / "last.json"

@@ -18,6 +18,18 @@ except Exception:
 
 
 # ---- Sub-configs as dataclasses (safe defaults) -------------------------------
+@dataclass
+class EncodingCfg:
+    """Decode/sanitize policy for genes before simulation."""
+    sanitize_on_decode: bool = False
+    enforce_semantics: bool = False
+    canonicalize_flags: bool = False
+    enforce_bounds_order: bool = False
+
+@dataclass
+class SelectionCfg:
+    method: str = "rank"        # rank | tournament | roulette | tournament | elite (selector is chosen in toolbox)
+    random_ratio: float = 0.0   # portion of picks done uniformly at random
 
 @dataclass
 class ActiveCfg:
@@ -109,12 +121,7 @@ def _normalize_dc(cls, value):
 @dataclass
 class GAExperiment:
     # Selection method & exploration
-
-
-
-
-    selection_method: str = "rank"        # elite | rank | roulette | tournament
-    random_selection_ratio: float = 0.0   # e.g., 0.05 for 5% random immigrants
+    selection: SelectionCfg = field(default_factory=SelectionCfg)
 
     # Active/passive mutation regimes (C#-style)
     active: ActiveCfg = field(default_factory=ActiveCfg)
@@ -138,6 +145,7 @@ class GAExperiment:
     structural: StructuralCfg = dc_field(default_factory=StructuralCfg)
     field: FieldCfg = dc_field(default_factory=FieldCfg)
     checkpoint: CheckpointCfg = dc_field(default_factory=CheckpointCfg)
+    encoding: EncodingCfg = dc_field(default_factory=EncodingCfg)
 
     # UI / ergonomics
     progress: bool = True
@@ -147,6 +155,16 @@ class GAExperiment:
         self.structural = _normalize_dc(StructuralCfg, self.structural)
         self.field      = _normalize_dc(FieldCfg,      self.field)
         self.checkpoint = _normalize_dc(CheckpointCfg, self.checkpoint)
+        self.active     = _normalize_dc(ActiveCfg,     self.active)
+        self.passive    = _normalize_dc(PassiveCfg,    self.passive)
+        self.structuralx= _normalize_dc(StructuralXCfg,self.structuralx)
+        # Accept selection as dict/DictConfig and coerce into SelectionCfg
+        if isinstance(self.selection, dict):
+            self.selection = SelectionCfg(**self.selection)
+        if DictConfig is not None and isinstance(self.selection, DictConfig):  # type: ignore
+            self.selection = SelectionCfg(**OmegaConf.to_container(self.selection, resolve=True))  # type: ignore
+        # Normalize encoding from dict/DictConfig to dataclass
+        self.encoding = _normalize_dc(EncodingCfg, self.encoding)
 
     def run(
         self,
@@ -197,9 +215,10 @@ class GAExperiment:
                 "passive": asdict(self.passive),
                 "structuralx": asdict(self.structuralx),
                 "selection": {
-                    "method": self.selection_method,
-                    "random_ratio": self.random_selection_ratio,
-                },
+                    "method": self.selection.method,
+                    "random_ratio": self.selection.random_ratio,
+                    },
+                "encoding": asdict(self.encoding),
             },
             states=states,
             seed=seed,

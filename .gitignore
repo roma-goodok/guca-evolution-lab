@@ -30,3 +30,4 @@ docs/xx_legacy/*.json
 /*.png
 
 logbook/
+code2prompt/
