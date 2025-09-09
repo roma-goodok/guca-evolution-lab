@@ -47,11 +47,12 @@ fitness:
   _target_: guca.fitness.meshes.TriangleMeshLegacyCS
   weights:
     _target_: guca.fitness.meshes.TriangleLegacyWeights
-    tri_face_weight: 2.6
-    vertex_penalty_weight: 0.75
-    shell_vertex_weight: 0.5
-    use_unique_shell_nodes: true
- 
+    tri_face_weight: 2.601
+    interior_deg6_weight: 2.0
+    vertex_weight: -0.5
+    shell_vertex_weight: -0.5
+    genome_len_bonus: false
+    genome_len_bonus_weight: 1.0
 
 
 # fitness:
