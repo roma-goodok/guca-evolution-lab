@@ -272,7 +272,7 @@ class TriangleLegacyWeights:
 
     # compactness / shapefactor
     vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -1.0      # penalty, legacy-UI-aligned default (helps monotonicity)    
+    shell_vertex_weight: float = -0.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
     
 
     genome_len_bonus: bool = False

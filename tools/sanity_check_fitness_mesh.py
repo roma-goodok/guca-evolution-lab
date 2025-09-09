@@ -267,7 +267,7 @@ def tri20():
               (0,3),(1,3),
               (2,3)])
 
-@case("3 triangles as triangle")
+@case("3 triangles as triangle *** -> fist stable level")
 def tri21():
     return G([(0,1),(0,2),(0,3),
               (1,2),(1,3),
