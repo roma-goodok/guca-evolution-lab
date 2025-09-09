@@ -7,6 +7,7 @@ import random
 def print_graph_summary(G: nx.Graph, title: str = ""):
     edges = sorted((int(min(u, v)), int(max(u, v))) for (u, v) in G.edges())
     if title:
+        print(80*"#")
         print("### ", title, " ###")
     print(f"nodes: {G.number_of_nodes()}  edges: {G.number_of_edges()}")
     print(f"edge_list: {edges}\n")
@@ -303,6 +304,17 @@ def tri_hex2():
               (6,0),(1,5), (0,7), (7,1)])
 
 
+
+
+@case("6 triangles and 2 bridges (3 triangles - 2 triangles - 1 triangle ")
+def tri_brindge1():
+    return G([(0,1),(1,2),(0,2),(1,3),(2,3),
+              (4,1),(4,3),(5,4),(5,7),(5,6),
+              (8,7),(8,6),(8,9),(9,10),(9,11),
+              (10,11),(7,6),])
+
+
+
 @case("3 triangles as line ")
 def tri_line1():
     return G([(0,1),(1,2),(0,2),(1,3),(1,4),
@@ -322,16 +334,44 @@ def tri_line3():
     return G([(0,1),(1,2),(0,2),(1,3),(1,4),
               (4,3), (2,3), (3,5), (4,5), (6,4), (6,5), (7,5), (7,6)])
 
+@case("5 triangles as pie (single 6-degree vertex on the shell) ")
+def tri_line4():
+    return G([(0,1),(1,2),(2,3),(3,4),(4,5),
+              (0,6), (1,6), (2,6), (3,6), (4,6),
+              (5,6)])
 
-@case("6 triangles and 2 bridges (3 triangles - 2 triangles - 1 triangle ")
-def tri_brindge1():
-    return G([(0,1),(1,2),(0,2),(1,3),(2,3),
-              (4,1),(4,3),(5,4),(5,7),(5,6),
-              (8,7),(8,6),(8,9),(9,10),(9,11),
-              (10,11),(7,6),])  
-              
+@case("10 triangles (2x6-deg vertices are inside the shell) ")
+def tri_line4():
+    return G([(0,1), (1,2), (2,3), (3,4), (4,5),
+              (5,0), (0,6), (1,6), (2,6), (3,6), (4,6),
+              (5,6), (3,7), (3,8), (3,9), (2,7),
+              (7,8), (8,9), (9,4)])
+
+@case("10 triangles as pie (2x6-deg  on the shell) ")
+def tri_line5():
+    return G([(0,1), (1,2), (2,3), (3,4), (4,5),
+              (0,6), (1,6), (2,6), (3,6), (4,6),
+              (5,6), (4,7), (5,7), (8,7), (9,7), 
+              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (10,11)])
+
+@case("8 triangles as pie (1x6-deg on the shell) ")
+def tri_line6():
+    return G([(2,3), (3,4), (4,5),
+              (2,6), (3,6), (4,6),
+              (5,6), (4,7), (5,7), (8,7), (9,7), 
+              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (10,11)])
 
 
+
+@case("7 triangles as pie (1x6-deg on the shell) ")
+def tri_line6():
+    return G([ (3,4), (4,5),
+               (3,6), (4,6),
+              (5,6), (4,7), (5,7), (8,7), (9,7), 
+              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (10,11)])
 
 def assert_order(results, *names_desc):
     lookup = {n: s for n, s, _ in results}
