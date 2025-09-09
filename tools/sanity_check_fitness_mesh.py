@@ -1,5 +1,6 @@
 import networkx as nx
 from guca.fitness.meshes import TriangleMesh, MeshWeights
+from guca.fitness.meshes import TriangleMeshLegacyCS
 
 # utils for sanity scripts/tests (version-agnostic)
 import random
@@ -95,10 +96,25 @@ def _nondecreasing(xs):
     return all(xs[i] <= xs[i+1] + 1e-9 for i in range(len(xs)-1))
 
 def test_triangle_monotonic_block():
-    tm = TriangleMesh()
+    tm = TriangleMeshLegacyCS()
     faces = [1, 2, 4, 6, 10]
-    scores = [tm.score(make_tri_patch("block", f)) for f in faces]
+
+    print(60*"#")
+    print("triangles monotonics:")
+
+    scores = []
+    for f in faces:
+        print("---")
+        
+        g = make_tri_patch("block", f)
+        score = tm.score(g)
+        print("f:", f, " score:", score)
+        scores.append(score)
     assert _nondecreasing(scores) and scores[0] < scores[-1]
+
+
+
+
 
 def test_quad_monotonic_grid():
     qm = QuadMesh()
@@ -152,7 +168,7 @@ def test_hex_forbidden_faces_penalizes_triangles():
 
 
 import networkx as nx
-from guca.fitness.meshes import TriangleMeshLegacyCS
+
 
 def _path(n):
     return nx.path_graph(n)
@@ -398,3 +414,24 @@ def run_cases(scorer: TriangleMeshLegacyCS, *, show_summary=True, rank=True, pre
 f = TriangleMeshLegacyCS()
 res = run_cases(f, show_summary=True, rank=True, verbose=True)
 # assert_order(res, "tri23", "tri22", "tri21", "tri20")  # optional
+
+
+from guca.fitness.planar_basic import PlanarBasic
+
+def _g_7_tri_pie():
+    G = nx.Graph()
+    G.add_edges_from([
+        (3,4), (4,5),
+        (3,6), (4,6), (5,6),
+        (4,7), (5,7), (5,8),
+        (7,8), (7,9), (8,9), (9,10), (10,11), (7,10), (7,11)
+    ])
+    return G
+    
+pb = PlanarBasic()
+emb = pb.compute_embedding_info(_g_7_tri_pie())
+print("faces:", emb.faces)
+print("shell:", emb.shell)
+print("interior:", emb.interior_nodes)
+
+test_triangle_monotonic_block()
