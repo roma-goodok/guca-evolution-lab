@@ -99,12 +99,21 @@ class PlanarBasic:
         else:
             pos = None
 
-        # 2) Extract faces (geometry-first)
+        # 2) Extract faces (geometry-first) and keep embedding when pos is missing
+        emb = None
         if pos:
             faces_raw = self._faces_from_pos(G, pos)
         else:
             planar, emb = check_planarity(G, counterexample=False)
             faces_raw = self._faces_from_embedding(G, emb) if planar else self._faces_from_cycles_proxy(G)
+            # derive positions from the SAME embedding for consistent shell choice
+            if emb is not None and not pos:
+                try:
+                    # NetworkX provides embedding -> coordinates conversion
+                    pos = nx.combinatorial_embedding_to_pos(emb)
+                except Exception:
+                    # fallback to a deterministic planar layout if unavailable
+                    pos = nx.planar_layout(G)
 
         # 3) Canonicalize & deduplicate cycles (ignore rotation & direction)
         canon_faces: Dict[Tuple[Hash, ...], List[Hash]] = {}
@@ -116,15 +125,58 @@ class PlanarBasic:
 
         faces = list(canon_faces.values())
 
-        # 4) Choose shell by maximal polygon area
+        # 4) Choose shell by maximum geometric area on a drawing derived from the SAME embedding.
+             # 4) Choose shell using a robust topology-first convention:
+        #    (a) Prefer the face whose boundary maximizes the count of edges
+        #        with triangle-incidence ≤ 1 (boundary-ish triangles),
+        #    (b) tie-break by signed area on a drawing derived from the SAME embedding.
         if not faces:
             shell = list(G.nodes())
         else:
-            if not pos:
-                # compute a quick layout to measure areas when pos is missing
-                pos = nx.planar_layout(G)
-            areas = [abs(self._polygon_area(f, pos)) for f in faces]
-            shell = faces[max(range(len(faces)), key=lambda i: areas[i])]
+            # Build triangle-incidence for undirected edges
+            def _e(u, v):
+                return (u, v) if u <= v else (v, u)
+
+            tri_edges: Dict[Tuple[Hash, Hash], int] = {}
+            for f in faces:
+                if len(f) == 3:
+                    for i in range(3):
+                        tri_edges[_e(f[i], f[(i + 1) % 3])] = tri_edges.get(_e(f[i], f[(i + 1) % 3]), 0) + 1
+
+            def face_boundary_score(f):
+                m = 0
+                L = len(f)
+                for i in range(L):
+                    e = _e(f[i], f[(i + 1) % L])
+                    if tri_edges.get(e, 0) <= 1:
+                        m += 1
+                return m
+
+            # (a) primary criterion: maximize boundary score
+            scores = [face_boundary_score(f) for f in faces]
+            best_idxs = [i for i, s in enumerate(scores) if s == max(scores)]
+
+            # (b) tie-break by signed area on a drawing derived from the SAME embedding
+            if len(best_idxs) > 1:
+                if not pos:
+                    try:
+                        if emb is not None:
+                            pos = nx.combinatorial_embedding_to_pos(emb)
+                        else:
+                            pos = nx.planar_layout(G)
+                    except Exception:
+                        pos = nx.planar_layout(G)
+                signed = [self._polygon_area(faces[i], pos) for i in best_idxs]
+                # Prefer the most negative (outer is CW in the common convention).
+                if any(a < 0 for a in signed):
+                    k = best_idxs[min(range(len(best_idxs)), key=lambda j: signed[j])]
+                else:
+                    # fall back: largest abs area
+                    absareas = [abs(a) for a in signed]
+                    k = best_idxs[min(range(len(best_idxs)), key=lambda j: -absareas[j])]
+            else:
+                k = best_idxs[0]
+            shell = faces[k]
 
         # 5) Compute counts/histograms
         shell_nodes = set(shell)
@@ -142,9 +194,6 @@ class PlanarBasic:
             interior_degree_hist=interior_degree_hist,
         )
 
-    # --------------------
-    # Helpers — face extraction
-    # --------------------
     @staticmethod
     def _simplify_face_cycle(cyc: List[Hash]) -> List[Hash]:
         """
