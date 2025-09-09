@@ -272,7 +272,7 @@ class TriangleLegacyWeights:
 
     # compactness / shapefactor
     vertex_weight: float = -0.75           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -1.0      # penalty, legacy-UI-aligned default (helps monotonicity)    
+    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
     
 
     genome_len_bonus: bool = False
@@ -390,8 +390,8 @@ class TriangleMeshLegacyCS(PlanarBasic):
         score = (
             tri_w * tri_count
             + in_deg6_w*float(interior_deg6)
-            - shell_w * float(shell_count)
-            - node_w * float(nV)
+            + shell_w * float(shell_count)
+            + node_w * float(nV)
             + 20.0
         )
 
