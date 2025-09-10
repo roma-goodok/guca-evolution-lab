@@ -278,6 +278,10 @@ class TriangleLegacyWeights:
     genome_len_bonus: bool = False
     genome_len_bonus_weight: float = 1.0
 
+    use_biconnected_gate: bool = True
+    biconnected_gate_score: float = 1.02
+    biconnected_gate_multiplier: float = 0.001
+
 class TriangleMeshLegacyCS(PlanarBasic):
     """
     Legacy C#-aligned triangle fitness.
@@ -330,7 +334,7 @@ class TriangleMeshLegacyCS(PlanarBasic):
         # (With the new embedding, faces_all will be [] for forests; keep this gate as-is.)
         if len(faces_all) == 1 and mu == 0:
             return 1.01
-
+    
         # degree cap
         degs = [d for _, d in GG.degree()]
         if degs and max(degs) > 6:
@@ -370,11 +374,23 @@ class TriangleMeshLegacyCS(PlanarBasic):
             + node_w * float(nV)
             + 20.0
         )
+      
 
         if self.w.genome_len_bonus:
             gl = _infer_genome_len(meta)
             if gl and gl > 0:
                 score += float(self.w.genome_len_bonus_weight) / gl
+
+        use_biconn_gate = bool(self.w.use_biconnected_gate)
+        biconn_gate_score = float(self.w.biconnected_gate_score)
+        biconnected_gate_multiplier = float(self.w.biconnected_gate_multiplier)
+        if use_biconn_gate:
+            try:
+                if not nx.is_biconnected(GG):
+                    score = biconn_gate_score + score * biconnected_gate_multiplier
+            except Exception:
+                # If the check fails for any reason, just skip the gate.
+                pass
 
         if verbose:
             print("\n---")

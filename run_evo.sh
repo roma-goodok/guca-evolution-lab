@@ -1,4 +1,4 @@
-export ML_LOGBOOK_DIR="logbook"
+export ML_LOGBOOK_DIR="_logbook"
 
 # python -m guca.cli.run_ga_hydra ga.checkpoint.fmt=yaml
 
