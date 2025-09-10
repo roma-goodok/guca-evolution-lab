@@ -75,6 +75,7 @@ class CheckpointCfg:
     out_dir: str = "checkpoints"
     export_full_condition_shape: bool = False
     save_best_png: bool = False
+    hist_bins: int = 100
 
 
 

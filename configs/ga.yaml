@@ -104,8 +104,8 @@ ga:
   # Core GA parameters
   pop_size: 40
   generations: 20
-  cx_pb: 1.0
-  mut_pb: 1.0
+  cx_pb: 0.8
+  mut_pb: 0.8
   tournament_k: 3
   elitism: 2
 
@@ -138,5 +138,6 @@ ga:
     out_dir: checkpoints       # relative to Hydra run dir
     export_full_condition_shape: true
     save_best_png: true
+    hist_bins: 100
 
-  progress: true      # <<< show tqdm progress bar
+  progress: true

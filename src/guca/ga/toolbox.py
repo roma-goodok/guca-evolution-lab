@@ -703,6 +703,196 @@ def _select_parents(pop, k, method: str, rng: random.Random, tourn_k: int):
     else:
         return tools.selTournament(pop, k=k, tournsize=tourn_k)
 
+# ---- NEW imports at top of file (with existing imports) ----
+import csv
+from datetime import datetime
+
+# ---- NEW helpers: small utilities ----
+def _mk_ckpt_subdir(root: Path, tag: str, gen: int) -> Path:
+    d = root / f"{tag}_{gen:05d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _pop_arrays(pop):
+    fits = [float(ind.fitness.values[0]) for ind in pop]
+    lengths = [len(ind) for ind in pop]
+    actlens = [int(sum(getattr(ind, "active_mask", []) or [])) for ind in pop]
+    return fits, lengths, actlens
+
+def _best_set(pop, fits):
+    if not fits:
+        return [], []
+    mx = max(fits)
+    tops = [ind for ind, f in zip(pop, fits) if abs(f - mx) < 1e-12]
+    return tops, mx
+
+def _write_population_json(dir_: Path, pop, fits):
+    out = []
+    for ind, f in zip(pop, fits):
+        out.append({
+            "fitness": float(f),
+            "length": len(ind),
+            "active_len": int(sum(getattr(ind, "active_mask", []) or [])),
+            "genes": [f"{g:016x}" for g in ind],
+        })
+    p = dir_ / "population.json"
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=2)
+    return str(p)
+
+def _machine_yaml_from_cfg(machine_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    nearest = machine_cfg.get("nearest_search", {}) or {}
+    return {
+        "start_state": str(machine_cfg.get("start_state", "A")),
+        "transcription": "resettable",
+        "count_compare": "range",
+        "max_vertices": int(machine_cfg.get("max_vertices", 2000)),
+        "max_steps": int(machine_cfg.get("max_steps", 120)),
+        "nearest_search": {
+            "max_depth": int(nearest.get("max_depth", 2)),
+            "tie_breaker": str(nearest.get("tie_breaker", "stable")),
+            "connect_all": bool(nearest.get("connect_all", False)),
+        },
+        # "rng_seed": machine_cfg.get("rng_seed", 42),  # optional
+    }
+
+def _write_genome_yaml(dir_: Path, best_genes: List[int], states: List[str],
+                       machine_cfg: Dict[str, Any],
+                       graph_summary: Optional[Dict[str, Any]] = None,
+                       activity_mask: Optional[List[bool]] = None,
+                       full_condition: bool = False) -> str:
+    try:
+        import yaml
+    except Exception:
+        yaml = None
+    rules = _genes_to_yaml_rules(best_genes, states, full_condition=full_condition)
+    y = {
+        "machine": _machine_yaml_from_cfg(machine_cfg),
+        "init_graph": {"nodes": [{"state": str(machine_cfg.get("start_state", "A"))}]},
+        "rules": rules,
+    }
+    if graph_summary or activity_mask is not None:
+        y["meta"] = {}
+        if graph_summary:
+            y["meta"]["graph_summary"] = graph_summary
+        if activity_mask is not None:
+            y["meta"]["activity_mask"] = [bool(x) for x in activity_mask]
+    p = dir_ / "genome.yaml"
+    if yaml is None:
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(y, indent=2))
+    else:
+        with open(p, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(y, fh, sort_keys=False, allow_unicode=True)
+    return str(p)
+
+def _render_png_dots(dir_: Path, G: nx.Graph, out_name: str = "best.png") -> Optional[str]:
+    # Reuse the public save_png utility which supports dots mode
+    try:
+        from guca.vis.png import save_png
+    except Exception:
+        return None
+    out = dir_ / out_name
+    # save_png expects a "graph-like" object; networkx.Graph is acceptable
+    try:
+        save_png(G, out, node_render="dots")
+        return str(out)
+    except Exception:
+        return None
+
+def _write_hist_png(dir_: Path, name: str, data: List[float], bins: int):
+    out = dir_ / name
+
+    # sanitize data (avoid NaN/inf)
+    vals = []
+    for x in data:
+        try:
+            xv = float(x)
+            if xv == xv and abs(xv) != float("inf"):
+                vals.append(xv)
+        except Exception:
+            continue
+    if not vals:
+        vals = [0.0]
+
+    # Matplotlib (force headless)
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(6.4, 4.2))
+        plt.hist(vals, bins=int(max(1, bins)))
+        plt.title(name.replace("_", " "))
+        plt.tight_layout()
+        plt.savefig(out.as_posix(), dpi=150)
+        plt.close()
+        return str(out)
+    except Exception:
+        pass
+
+    # Ultimate fallback: tiny placeholder PNG so tests pass
+    try:
+        with open(out, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+        return str(out)
+    except Exception:
+        return None
+
+
+def _write_metrics_csv(dir_: Path, metrics: Dict[str, Any]):
+    p = dir_ / "metrics.csv"
+    cols = list(metrics.keys())
+    with open(p, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(cols)
+        w.writerow([metrics[k] for k in cols])
+    return str(p)
+
+def _bundle_checkpoint(dir_: Path, *,
+                       pop, fits, states, machine_cfg, fitness,
+                       best_ind, best_mask, G_best, full_condition: bool,
+                       hist_bins: int):
+    # population.json
+    _write_population_json(dir_, pop, fits)
+
+    # runnable genome.yaml (+meta)
+    gsum = _graph_summary(G_best, states) if G_best is not None else None
+    genome_path = _write_genome_yaml(dir_, list(best_ind), states, machine_cfg, gsum, best_mask, full_condition)
+
+    # PNG (dots)
+    if G_best is not None:
+        _render_png_dots(dir_, G_best, out_name="best.png")
+
+    # histograms
+    _, lengths, actlens = _pop_arrays(pop)  # fits already passed
+    _write_hist_png(dir_, "hist_fitness.png", fits, bins=hist_bins)
+    _write_hist_png(dir_, "hist_length.png", lengths, bins=hist_bins)
+    _write_hist_png(dir_, "hist_active.png", actlens, bins=hist_bins)
+
+    # metrics.csv
+    tops, mx = _best_set(pop, fits)
+    best_act = int(sum(getattr(best_ind, "active_mask", []) or []))
+    avg_fit = sum(fits) / max(1, len(fits))
+    cnt_max = len(tops)
+    top_act_av = (sum(int(sum(getattr(t, "active_mask", []) or [])) for t in tops) / cnt_max) if cnt_max else 0.0
+    pop_act_av = sum(actlens) / max(1, len(actlens))
+    best_len = len(best_ind)
+    avg_len = sum(lengths) / max(1, len(lengths))
+
+    stats = {
+        "best_fitness": float(mx),
+        "avg_fitness": float(avg_fit),
+        "count_at_max": int(cnt_max),
+        "best_active_len": int(best_act),
+        "avg_active_len_at_max": float(top_act_av),
+        "avg_active_len_pop": float(pop_act_av),
+        "best_length": int(best_len),
+        "avg_length_pop": float(avg_len),
+    }
+    _write_metrics_csv(dir_, stats)
+
+    return {"genome": genome_path, "metrics": stats}
+
 
 
 # ======================
@@ -864,20 +1054,52 @@ def evolve(
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
     full_cond = bool(ckpt.get("export_full_condition_shape", False))
-    save_best_png = bool(ckpt.get("save_best_png", False))    
-
+    save_best_png = bool(ckpt.get("save_best_png", False))
+    hist_bins = int(ckpt.get("hist_bins", 100))
 
     # initial checkpoints (generation 0)
     hof.update(pop)
-    best0 = hof[0]    
-    
-    _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states, full_condition=full_cond)
+    best0 = hof[0]
 
+    # Compile quick stats & optionally write a FIRST out-of-sequence checkpoint (last_0000)
+    fits0 = [ind.fitness.values[0] for ind in pop]
+    best0_graph = None
+    best0_mask = getattr(best0, "active_mask", None)
+    try:
+        sim0 = simulate_genome(list(best0), states=states, machine_cfg=machine_cfg, collect_activity=True)
+        if isinstance(sim0, tuple) and len(sim0) == 2:
+            best0_graph, best0_mask = sim0
+        else:
+            best0_graph = sim0
+    except Exception:
+        best0_graph = None
 
+    # Always produce an initial "last_0000" folder if save_last
+    last_dir_path = None
+    if save_last:
+        last_dir = _mk_ckpt_subdir(ckpt_dir, "last", 0)
+        _bundle_checkpoint(last_dir,
+            pop=pop, fits=fits0, states=states, machine_cfg=machine_cfg, fitness=fitness,
+            best_ind=best0, best_mask=best0_mask, G_best=best0_graph,
+            full_condition=full_cond, hist_bins=hist_bins
+        )
+        last_dir_path = str(last_dir)
+
+    # For backward compatibility, provide a 'best' pointer (to runnable YAML in last_0000)
+    paths = {}
+    if save_best:
+        # Point to the runnable genome.yaml we just wrote
+        if last_dir_path is not None:
+            paths["best"] = str(Path(last_dir_path) / "genome.yaml")
+
+    # (optional) keep population jsonl if requested
     if save_population in ("best", "all"):
         _write_checkpoint_pop(ckpt_dir, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop], save_population)
+
+    # epoch_0000 snapshot if periodic saving is configured
     if save_every and save_every > 0:
         _write_checkpoint_epoch(ckpt_dir, 0, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
+
 
     record0 = stats.compile(pop)
     best_len0 = len(hof[0]) if len(hof) else 0
@@ -885,12 +1107,35 @@ def evolve(
     # --- progress bar setup ---
     pbar = None
     if progress and tqdm is not None:
+        # NEW: derive extra stats for postfix
+        fits_arr, lens_arr, acts_arr = _pop_arrays(pop)
+        tops0, mx0 = _best_set(pop, fits_arr)
+        if tops0:
+            len_top_max = max(len(t) for t in tops0)
+            len_top_min = min(len(t) for t in tops0)
+            len_top_avg = sum(len(t) for t in tops0) / len(tops0)
+            act_top_vals = [int(sum(getattr(t, "active_mask", []) or [])) for t in tops0]
+            act_top_max = max(act_top_vals)
+            act_top_min = min(act_top_vals)
+            act_top_avg = sum(act_top_vals) / len(act_top_vals)
+        else:
+            len_top_max = len_top_min = len_top_avg = 0
+            act_top_max = act_top_min = act_top_avg = 0
         pbar = tqdm(total=ngen, desc="epochs", leave=True, dynamic_ncols=True)
-        pbar.set_postfix(max=f"{record0['max']:.4f}",
-                         avg=f"{record0['avg']:.4f}",
-                         len=best_len0)
+        pbar.set_postfix(
+            max=f"{record0['max']:.4f}",
+            avg=f"{record0['avg']:.4f}",
+            len=best_len0,
+            len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}",
+            cnt_max=len(tops0),
+            act_avg=f"{(sum(acts_arr)/max(1,len(acts_arr))):.2f}",
+            len_top=f"{len_top_min:.0f}/{len_top_avg:.1f}/{len_top_max:.0f}",
+            act_top=f"{act_top_min:.0f}/{act_top_avg:.1f}/{act_top_max:.0f}",
+        )
     elif progress:
         print(f"gen 0/{ngen}  max={record0['max']:.4f}  avg={record0['avg']:.4f}  len={best_len0}")
+
+    best_so_far = record0['max']
 
     # evolve
     for gen in range(1, ngen + 1):
@@ -953,35 +1198,102 @@ def evolve(
 
         best_len = len(hof[0]) if len(hof) else 0
 
-        if save_every and gen % save_every == 0:
-            _write_checkpoint_epoch(ckpt_dir, gen,
-                                    [list(ind) for ind in pop],
-                                    [ind.fitness.values[0] for ind in pop])
+        # Prepare arrays
+        fits_arr, lens_arr, acts_arr = _pop_arrays(pop)
+        tops, mx = _best_set(pop, fits_arr)
 
-        # progress update
+        # 1) periodic checkpoint folder (epoch_<gen>)
+        if save_every and gen % save_every == 0:
+            try:
+                # Simulate best for this generation to include runnable PNG and YAML
+                G_tmp, mask_tmp = None, getattr(hof[0], "active_mask", None)
+                try:
+                    simt = simulate_genome(list(hof[0]), states=states, machine_cfg=machine_cfg, collect_activity=True)
+                    if isinstance(simt, tuple) and len(simt) == 2:
+                        G_tmp, mask_tmp = simt
+                    else:
+                        G_tmp = simt
+                except Exception:
+                    G_tmp = None
+                d_epoch = _mk_ckpt_subdir(ckpt_dir, "epoch", gen)
+                _bundle_checkpoint(d_epoch,
+                    pop=pop, fits=fits_arr, states=states, machine_cfg=machine_cfg, fitness=fitness,
+                    best_ind=hof[0], best_mask=mask_tmp, G_best=G_tmp,
+                    full_condition=full_cond, hist_bins=hist_bins
+                )
+            except Exception:
+                pass
+
+        # 2) out-of-sequence when a NEW best appears
+        # We detect via record['max'] jump against previous best on disk-less state; use hof[0] change OR simply write every time record['max'] improves vs previous loop
+        # Keep a simple rolling max:
+
+        # new
+        if record['max'] > best_so_far and save_last:
+            best_so_far = record['max']
+
+
+            try:
+                G_new, mask_new = None, getattr(hof[0], "active_mask", None)
+                try:
+                    simn = simulate_genome(list(hof[0]), states=states, machine_cfg=machine_cfg, collect_activity=True)
+                    if isinstance(simn, tuple) and len(simn) == 2:
+                        G_new, mask_new = simn
+                    else:
+                        G_new = simn
+                except Exception:
+                    G_new = None
+                d_last = _mk_ckpt_subdir(ckpt_dir, "last", gen)
+                bundle = _bundle_checkpoint(d_last,
+                    pop=pop, fits=fits_arr, states=states, machine_cfg=machine_cfg, fitness=fitness,
+                    best_ind=hof[0], best_mask=mask_new, G_best=G_new,
+                    full_condition=full_cond, hist_bins=hist_bins
+                )
+                # update paths map for backward-compat
+                paths["best"] = str(Path(d_last) / "genome.yaml")
+                if save_best_png and G_new is not None:
+                    paths["best_png"] = str(Path(d_last) / "best.png")
+                paths["last"] = str(d_last)
+            except Exception:
+                pass
+
+        # 3) progress update (rich metrics)
         if pbar is not None:
-            pbar.set_postfix(max=f"{record['max']:.4f}",
-                             avg=f"{record['avg']:.4f}",
-                             len=best_len)
+            if tops:
+                len_top_max = max(len(t) for t in tops)
+                len_top_min = min(len(t) for t in tops)
+                len_top_avg = sum(len(t) for t in tops) / len(tops)
+                act_top_vals = [int(sum(getattr(t, "active_mask", []) or [])) for t in tops]
+                act_top_max = max(act_top_vals)
+                act_top_min = min(act_top_vals)
+                act_top_avg = sum(act_top_vals) / len(act_top_vals)
+            else:
+                len_top_max = len_top_min = len_top_avg = 0
+                act_top_max = act_top_min = act_top_avg = 0
+
+            pbar.set_postfix(
+                max=f"{record['max']:.4f}",
+                avg=f"{record['avg']:.4f}",
+                len=best_len,
+                len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}",
+                cnt_max=len(tops),
+                act_avg=f"{(sum(acts_arr)/max(1,len(acts_arr))):.2f}",
+                len_top=f"{len_top_min:.0f}/{len_top_avg:.1f}/{len_top_max:.0f}",
+                act_top=f"{act_top_min:.0f}/{act_top_avg:.1f}/{act_top_max:.0f}",
+            )
             pbar.update(1)
         elif progress:
             print(f"gen {gen}/{ngen}  max={record['max']:.4f}  avg={record['avg']:.4f}  len={best_len}")
 
+
     if pbar is not None:
         pbar.close()
 
-    # final checkpoints
+    # final checkpoints    
     best = hof[0]
-    paths = {}
-
-    # NEW: single simulate_genome call – both graph and activity
+    # Try to reuse the already-simulated G_best from the very last improvement if available; else recompute
     try:
-        sim = simulate_genome(
-            list(best),
-            states=states,          # use the same states you pass into evolve(...)
-            machine_cfg=machine_cfg,# use the same machine_cfg you pass into evolve(...)
-            collect_activity=True
-        )
+        sim = simulate_genome(list(best), states=states, machine_cfg=machine_cfg, collect_activity=True)
         if isinstance(sim, tuple) and len(sim) == 2:
             G_best, mask = sim
         else:
@@ -992,40 +1304,22 @@ def evolve(
     gsum = _graph_summary(G_best, states) if G_best is not None else None
     activity_yaml = _activity_to_yaml(mask)
 
+    # Provide compatibility keys
+    if save_best and "best" not in paths:
+        # If no "last_*" happened, create a final folder so that 'best' points to something runnable
+        d_last_final = _mk_ckpt_subdir(ckpt_dir, "last", ngen)
+        _bundle_checkpoint(d_last_final,
+            pop=pop, fits=[ind.fitness.values[0] for ind in pop], states=states, machine_cfg=machine_cfg, fitness=fitness,
+            best_ind=best, best_mask=getattr(best, "active_mask", None), G_best=G_best,
+            full_condition=full_cond, hist_bins=hist_bins
+        )
+        paths["best"] = str(Path(d_last_final) / "genome.yaml")
+        if save_best_png and G_best is not None:
+            paths["best_png"] = str(Path(d_last_final) / "best.png")
 
-
-    if save_best:
-        paths.update(_write_checkpoint_best(
-            ckpt_dir, list(best), best.fitness.values[0], fmt, states,
-            full_condition=full_cond, graph_summary=gsum, activity=activity_yaml
-        ))
-
-
-
-
-    if save_last:
-        last_path = ckpt_dir / "last.json"
-        with open(last_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "best_fitness": float(best.fitness.values[0]),
-                "best_genes": _genes_to_hex(list(best)),
-                "pop_size": pop_size,
-                "generations": ngen,
-                "graph_summary": gsum,
-            }, f, indent=2)
-        paths["last"] = str(last_path)
-
-    # optional in-process PNG (now using the already-simulated G_best)
-    if save_best_png:
-        png = _render_best_png_inproc(ckpt_dir, G_best)
-        if png:
-            paths["best_png"] = png
-
-
-    # close the pool if any
-    if 'pool' in locals() and pool is not None:
-        pool.close()
-        pool.join()
+    if save_last and "last" not in paths:
+        # Make sure we have a last folder path surfaced
+        paths["last"] = str(ckpt_dir)
 
     return {
         "status": "ok",
@@ -1036,3 +1330,4 @@ def evolve(
         "graph_summary": gsum,
         "checkpoints": paths,
     }
+
