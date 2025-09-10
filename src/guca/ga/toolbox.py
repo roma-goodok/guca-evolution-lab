@@ -686,6 +686,10 @@ def _eval_only(genes: List[int]) -> float:
     G = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG)
     return float(_WFIT.score(G))
 
+def _eval_with_mask(genes: List[int]) -> Tuple[float, List[bool]]:
+    G, mask = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG, collect_activity=True)
+    return float(_WFIT.score(G)), list(mask or [])
+
 
 def _select_parents(pop, k, method: str, rng: random.Random, tourn_k: int):
     m = method.lower()
@@ -1035,9 +1039,11 @@ def evolve(
         map_fn = map
 
     # evaluate initial pop
-    fits = list(map_fn(_eval_only, pop))
-    for ind, fit in zip(pop, fits):
+    res = list(map_fn(_eval_with_mask, pop))
+    for ind, (fit, mask) in zip(pop, res):
         ind.fitness.values = (fit,)
+        setattr(ind, "active_mask", mask)
+
 
     stats = tools.Statistics(lambda ind: ind.fitness.values[0])
     stats.register("avg", lambda xs: sum(xs) / max(1, len(xs)))
@@ -1103,6 +1109,7 @@ def evolve(
 
     record0 = stats.compile(pop)
     best_len0 = len(hof[0]) if len(hof) else 0
+    best_so_far = record0['max'] 
 
     # --- progress bar setup ---
     pbar = None
@@ -1134,8 +1141,6 @@ def evolve(
         )
     elif progress:
         print(f"gen 0/{ngen}  max={record0['max']:.4f}  avg={record0['avg']:.4f}  len={best_len0}")
-
-    best_so_far = record0['max']
 
     # evolve
     for gen in range(1, ngen + 1):
@@ -1188,9 +1193,11 @@ def evolve(
         # evaluate invalid
         invalid = [ind for ind in pop if not ind.fitness.valid]
         if invalid:
-            newfits = list(map_fn(_eval_only, invalid))
-            for ind, fit in zip(invalid, newfits):
+            res_inv = list(map_fn(_eval_with_mask, invalid))
+            for ind, (fit, mask) in zip(invalid, res_inv):
                 ind.fitness.values = (fit,)
+                setattr(ind, "active_mask", mask)
+
 
         # update HOF & checkpoints
         hof.update(pop)
@@ -1320,6 +1327,12 @@ def evolve(
     if save_last and "last" not in paths:
         # Make sure we have a last folder path surfaced
         paths["last"] = str(ckpt_dir)
+
+    # --- graceful pool shutdown (if used) ---
+    if pool is not None:
+        pool.close()
+        pool.join()
+
 
     return {
         "status": "ok",

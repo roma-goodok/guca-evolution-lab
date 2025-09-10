@@ -54,7 +54,7 @@ fitness:
     genome_len_bonus: false
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true
-    biconnected_gate_score: 1.02
+    biconnected_gate_score: 3.02
     biconnected_gate_multiplier: 0.001
 
 
