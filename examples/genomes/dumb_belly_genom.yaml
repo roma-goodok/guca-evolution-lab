@@ -82,7 +82,7 @@ rules:
     operand: H
 expected:
   steps: 120
-  nodes: 140
+  nodes: 14
   edges: 13
   states_count:
     C: 2
