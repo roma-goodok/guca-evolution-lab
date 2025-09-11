@@ -3,9 +3,9 @@
 
 # -------- Experiment meta --------
 experiment:
-  name: "exp001_hex_baseline"
+  name: "exp003.02_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: ""   # optional note; not used by Hydra
+  inherits: "exp003.01 but cx_pb 0.8->0.5"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -22,7 +22,7 @@ hydra:
 
 # -------- Repro & parallelism --------
 seed: 12345
-n_workers: 0          # 0=serial; >0=multiprocessing
+n_workers: 8          # 0=serial; >0=multiprocessing
 
 # -------- State alphabet (labels; mapped to ints by order) --------
 states: [A, B, C, D, E, F, G, H]
@@ -30,7 +30,7 @@ states: [A, B, C, D, E, F, G, H]
 # -------- Machine config (single-node A via omission of init_graph.nodes) --------
 machine:
   _target_: guca.engine.config.MachineConfig
-  max_steps: 10
+  max_steps: 50
   max_vertices: 100
   start_state: A
   rng_seed: ${seed}
@@ -75,8 +75,8 @@ ga:
   _target_: guca.ga.experiment.GAExperiment
   
   selection:
-    method: rank        # rank | tournament | roulette
-    random_ratio: 0.0   # portion of picks done uniformly at random
+    method: roulette        # rank | tournament | roulette
+    random_ratio: 0.05   # portion of picks done uniformly at random
 
   active:                           # legacy: active byte, p=0.10, +rotate 0.02
     factor: 0.10
@@ -104,7 +104,7 @@ ga:
   # Core GA parameters
   pop_size: 40
   generations: 20
-  cx_pb: 0.8
+  cx_pb: 0.5
   mut_pb: 0.8
   tournament_k: 3
   elitism: 2
@@ -116,9 +116,9 @@ ga:
 
   # Structural mutation rates
   structural:
-    insert_pb: 0.5
+    insert_pb: 0.35 # 0.5
     delete_pb: 0.15
-    duplicate_pb: 0.10
+    duplicate_pb: 0.20 # 0.10
 
   # Field mutation regime
   field:

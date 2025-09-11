@@ -14,4 +14,5 @@ class MachineConfig:
     max_vertices: int = 2000
     start_state: str = "A"
     rng_seed: int = 42
+    transcription: str = "continuable"
     nearest_search: NearestSearchCfg = field(default_factory=NearestSearchCfg)

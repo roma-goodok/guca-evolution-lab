@@ -1,6 +1,6 @@
 machine:
   start_state: A
-  transcription: resettable
+  transcription: resettable #continuable
   count_compare: range
   max_vertices: 2000
   max_steps: 120
