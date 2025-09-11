@@ -4,6 +4,7 @@ from guca.fitness.meshes import TriangleMeshLegacyCS
 
 # utils for sanity scripts/tests (version-agnostic)
 import random
+import yaml
 
 def print_graph_summary(G: nx.Graph, title: str = ""):
     edges = sorted((int(min(u, v)), int(max(u, v))) for (u, v) in G.edges())
@@ -105,7 +106,7 @@ def test_triangle_monotonic_block():
     scores = []
     for f in faces:
         print("---")
-        
+
         g = make_tri_patch("block", f)
         score = tm.score(g)
         print("f:", f, " score:", score)
@@ -236,9 +237,9 @@ def test_24_clean_mesh_beats_with_offshoots():
     assert f.score(clean) > f.score(messy)
 
 def test_25_more_adjacent_triangles_scores_higher():
-    f = TriangleMeshLegacyCS()    
+    f = TriangleMeshLegacyCS()
     two = _two_adjacent_triangles()
-    three = _strip_of_three_adjacent_triangles()        
+    three = _strip_of_three_adjacent_triangles()
     assert f.score(three) > f.score(two)
 
 print("TriangleMeshLegacyCS:")
@@ -367,16 +368,16 @@ def tri_line4():
 def tri_line5():
     return G([(0,1), (1,2), (2,3), (3,4), (4,5),
               (0,6), (1,6), (2,6), (3,6), (4,6),
-              (5,6), (4,7), (5,7), (8,7), (9,7), 
-              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (5,6), (4,7), (5,7), (8,7), (9,7),
+              (10,7), (11,7), (5,8), (8,9), (9,10),
               (10,11)])
 
 @case("8 triangles as pie (1x6-deg on the shell) ")
 def tri_line6():
     return G([(2,3), (3,4), (4,5),
               (2,6), (3,6), (4,6),
-              (5,6), (4,7), (5,7), (8,7), (9,7), 
-              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (5,6), (4,7), (5,7), (8,7), (9,7),
+              (10,7), (11,7), (5,8), (8,9), (9,10),
               (10,11)])
 
 
@@ -385,9 +386,76 @@ def tri_line6():
 def tri_line6():
     return G([ (3,4), (4,5),
                (3,6), (4,6),
-              (5,6), (4,7), (5,7), (8,7), (9,7), 
-              (10,7), (11,7), (5,8), (8,9), (9,10), 
+              (5,6), (4,7), (5,7), (8,7), (9,7),
+              (10,7), (11,7), (5,8), (8,9), (9,10),
               (10,11)])
+
+
+
+@case("-->> checkpoint")
+def checkpoint():
+    
+
+    # Hardcoded YAML text
+    yaml_text = """
+edge_list:
+    - - 0
+      - 91
+    - - 13
+      - 32
+    - - 14
+      - 33
+    - - 40
+      - 65
+    - - 43
+      - 66
+    - - 58
+      - 67
+    - - 58
+      - 87
+    - - 58
+      - 90
+    - - 58
+      - 94
+    - - 61
+      - 79
+    - - 61
+      - 88
+    - - 61
+      - 95
+    - - 64
+      - 80
+    - - 64
+      - 89
+    - - 64
+      - 96
+    - - 67
+      - 87
+    - - 67
+      - 90
+    - - 67
+      - 97
+    - - 73
+      - 98
+    - - 76
+      - 99
+    - - 87
+      - 90
+    - - 87
+      - 94
+    - - 90
+      - 97
+    """
+
+    # Load the YAML data
+    data = yaml.safe_load(yaml_text)
+
+    # Convert edge_list to list of tuples
+    edge_list = data['edge_list']
+    print(edge_list)
+    tuple_list = [tuple(edge) for edge in edge_list]
+    
+    return G(tuple_list)
 
 def assert_order(results, *names_desc):
     lookup = {n: s for n, s, _ in results}
@@ -427,7 +495,7 @@ def _g_7_tri_pie():
         (7,8), (7,9), (8,9), (9,10), (10,11), (7,10), (7,11)
     ])
     return G
-    
+
 pb = PlanarBasic()
 emb = pb.compute_embedding_info(_g_7_tri_pie())
 print("faces:", emb.faces)
@@ -435,3 +503,7 @@ print("shell:", emb.shell)
 print("interior:", emb.interior_nodes)
 
 test_triangle_monotonic_block()
+
+
+
+

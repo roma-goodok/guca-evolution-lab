@@ -272,7 +272,7 @@ class TriangleLegacyWeights:
 
     # compactness / shapefactor
     vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -0.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
+    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
     
 
     genome_len_bonus: bool = False
@@ -319,6 +319,8 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if nV <= 2:
             return 1.0
 
+        
+
         emb = self.compute_embedding_info(GG)
         faces_all = emb.faces  # minimal inner faces + (maybe) one outer shell
 
@@ -339,6 +341,11 @@ class TriangleMeshLegacyCS(PlanarBasic):
         degs = [d for _, d in GG.degree()]
         if degs and max(degs) > 6:
             return 1.03
+
+
+        c_G = nx.number_connected_components(G)
+        if c_G > 1:
+            return 1.04
 
         # --- triangle count: count *facial* triangles only ---
         # Faces are already minimalized, so just count length-3 faces.
