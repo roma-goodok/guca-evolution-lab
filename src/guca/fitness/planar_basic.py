@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple, Hashable
+from typing import Dict, List, Optional, Sequence, Set, Tuple, Hashable
 from collections import Counter
-import math
+import itertools
 
 import networkx as nx
 from networkx.algorithms.planarity import check_planarity
@@ -15,7 +15,7 @@ Hash = Hashable
 @dataclass
 class EmbeddingInfo:
     faces: List[List[Hash]]                 # unique faces as node-cycles (shell included)
-    shell: List[Hash]                       # nodes along the outer face
+    shell: List[Hash]                       # nodes along the outer face (maximal outer shell)
     shell_nodes: Set[Hash]
     face_lengths: Counter
     interior_nodes: Set[Hash]
@@ -33,12 +33,13 @@ class PlanarBasic:
     """
     Common scaffolding for GUCA graph fitness functions.
 
-    Strategy:
-      1) Geometry-first: if nodes carry `pos`, compute faces by clockwise traversal in 2D.
-         This aligns faces with the intended lattice (triangle/hex).
-      2) Else fall back to NetworkX PlanarEmbedding traversal.
-      3) Canonicalize cycles (ignore rotation & direction) to dedup.
-      4) Choose shell (outer) by maximal polygon area, then classify interior.
+    Refactored to use a purely topological pipeline:
+      1) Obtain a planar embedding (NetworkX).
+      2) Enumerate embedding faces (half-edge walk).
+      3) For each inner face, split by existing chords to get chordless minimal faces.
+      4) Deduplicate cycles (ignore rotation & reversal).
+      5) Shell (outer) = longest cycle among edges used by exactly one minimal inner face.
+         Fallback: embedding's outer face if shell reconstruction yields none (e.g., trees).
     """
 
     def __init__(
@@ -90,201 +91,229 @@ class PlanarBasic:
         return G.subgraph(comps[0]).copy()
 
     def compute_embedding_info(self, G: nx.Graph) -> EmbeddingInfo:
-        # 1) Gather positions if available (prefer real positions to keep lattice faces correct)
-        pos_attr = nx.get_node_attributes(G, "pos")
-        pos: Optional[Dict[Hash, Tuple[float, float]]]
-        if pos_attr:
-            # normalize to tuples of floats
-            pos = {n: (float(p[0]), float(p[1])) for n, p in pos_attr.items()}
-        else:
-            pos = None
+        """
+        Core: compute minimal inner faces and a maximal outer shell (purely topological),
+        with full robustness for edgeless / acyclic / disconnected graphs.
+        """
+        # Early outs for degenerate inputs
+        if G.number_of_nodes() == 0:
+            return EmbeddingInfo(
+                faces=[],
+                shell=[],
+                shell_nodes=set(),
+                face_lengths=Counter(),
+                interior_nodes=set(),
+                interior_degree_hist=Counter(),
+            )
 
-        # 2) Extract faces (geometry-first)
-        if pos:
-            faces_raw = self._faces_from_pos(G, pos)
-        else:
-            planar, emb = check_planarity(G, counterexample=False)
-            faces_raw = self._faces_from_embedding(G, emb) if planar else self._faces_from_cycles_proxy(G)
+        if G.number_of_edges() == 0:
+            # No edges ⇒ no cycles ⇒ no faces; shell is undefined/empty
+            interior_nodes = set(G.nodes())
+            interior_degree_hist = Counter(G.degree(n) for n in interior_nodes)
+            return EmbeddingInfo(
+                faces=[],
+                shell=[],
+                shell_nodes=set(),
+                face_lengths=Counter(),
+                interior_nodes=interior_nodes,
+                interior_degree_hist=interior_degree_hist,
+            )
 
-        # 3) Canonicalize & deduplicate cycles (ignore rotation & direction)
+        # 1) Planarity + embedding faces
+        planar, emb = check_planarity(G, counterexample=False)
+        if not planar or emb is None:
+            # Nonplanar or no embedding (paranoia): return empty facial data
+            interior_nodes = set(G.nodes())
+            interior_degree_hist = Counter(G.degree(n) for n in interior_nodes)
+            return EmbeddingInfo(
+                faces=[],
+                shell=[],
+                shell_nodes=set(),
+                face_lengths=Counter(),
+                interior_nodes=interior_nodes,
+                interior_degree_hist=interior_degree_hist,
+            )
+
+        emb_faces, outer_idx = self._planar_faces(G, emb)  # robust: may return outer_idx=None
+        # If there are no embedded cycles (e.g., forests), emb_faces == [] and outer_idx is None.
+
+        # 2) Decompose inner faces into minimal chordless faces (if any faces exist)
+        raw_minimal: List[List[Hash]] = []
+        if emb_faces:
+            for i, f in enumerate(emb_faces):
+                if outer_idx is not None and i == outer_idx:
+                    continue
+                raw_minimal.extend(self._decompose_face_by_allowed_chords(f, G))
+
+        # 3) Deduplicate minimal faces (rotation + reversal)
+        minimal_inner = self._unique_cycles(raw_minimal)
+
+        # 4) Build shell from edges on exactly one minimal inner face
+        shell: List[Hash] = []
+        if minimal_inner:
+            shell_edges_cnt = Counter()
+            for f in minimal_inner:
+                for e in self._edges_in_cycle(f):
+                    shell_edges_cnt[e] += 1
+            shell_edges = [e for e, c in shell_edges_cnt.items() if c == 1]
+
+            # Reconstruct maximal outer shell as the longest cycle in shell-edge subgraph
+            if shell_edges:
+                H = nx.Graph()
+                H.add_edges_from(shell_edges)
+                shell_cycles = nx.cycle_basis(H)
+                if shell_cycles:
+                    shell = max(shell_cycles, key=len)
+
+        # Fallback for cases where we have cycles but reconstruction yielded none
+        if not shell and emb_faces and outer_idx is not None and 0 <= outer_idx < len(emb_faces):
+            shell = emb_faces[outer_idx]
+
+        # 5) Final face list = minimal inner + (outer shell if present)
+        faces = minimal_inner + ([shell] if shell else [])
+
+        # 6) Canonicalize & deduplicate faces (safety)
         canon_faces: Dict[Tuple[Hash, ...], List[Hash]] = {}
-        for cyc in faces_raw:
+        for cyc in faces:
             if len(cyc) < 3:
                 continue
             key = self._canon_cycle_key(cyc)
-            canon_faces[key] = list(cyc)  # last writer wins; they are equivalent
+            canon_faces[key] = list(cyc)
+        faces_out = list(canon_faces.values())
 
-        faces = list(canon_faces.values())
-
-        # 4) Choose shell by maximal polygon area
-        if not faces:
-            shell = list(G.nodes())
-        else:
-            if not pos:
-                # compute a quick layout to measure areas when pos is missing
-                pos = nx.planar_layout(G)
-            areas = [abs(self._polygon_area(f, pos)) for f in faces]
-            shell = faces[max(range(len(faces)), key=lambda i: areas[i])]
-
-        # 5) Compute counts/histograms
-        shell_nodes = set(shell)
-        face_lengths = Counter(len(f) for f in faces)
-
+        # 7) Shell fields and interior stats
+        shell_nodes = set(shell) if shell else set()
+        face_lengths = Counter(len(f) for f in faces_out)
         interior_nodes = set(G.nodes()) - shell_nodes
         interior_degree_hist = Counter(G.degree(n) for n in interior_nodes) if interior_nodes else Counter()
 
         return EmbeddingInfo(
-            faces=faces,
-            shell=shell,
+            faces=faces_out,
+            shell=list(shell),
             shell_nodes=shell_nodes,
             face_lengths=face_lengths,
             interior_nodes=interior_nodes,
             interior_degree_hist=interior_degree_hist,
         )
 
-    # --------------------
-    # Helpers — face extraction
-    # --------------------
     @staticmethod
-    def _simplify_face_cycle(cyc: List[Hash]) -> List[Hash]:
+    def _planar_faces(G: nx.Graph, emb) -> Tuple[List[List[Hash]], Optional[int]]:
         """
-        Make a DCEL-traversed face a simple polygon without over-merging:
-        - drop closing duplicate,
-        - collapse immediate duplicates,
-        - remove only *local* backtracks a,b,a -> a.
+        Enumerate faces from a NetworkX PlanarEmbedding (half-edge traversal).
+        Returns (faces, outer_face_index). If no facial cycles exist, returns ([], None).
         """
-        s = list(cyc)
-        # drop closing duplicate
-        if len(s) > 1 and s[0] == s[-1]:
-            s = s[:-1]
-
-        # collapse immediate duplicates
-        t: List[Hash] = []
-        for v in s:
-            if not t or t[-1] != v:
-                t.append(v)
-        s = t
-
-        # remove local backtracks a,b,a
-        i = 0
-        while i + 2 < len(s):
-            if s[i] == s[i + 2]:
-                # delete middle 'b' and the second 'a'; keep the first 'a'
-                del s[i + 1:i + 3]
-                if i > 0:
-                    i -= 1
-            else:
-                i += 1
-
-        return s
-
-    @staticmethod
-    def _faces_from_embedding(G: nx.Graph, emb) -> List[List[Hash]]:
         faces: List[List[Hash]] = []
         visited: Set[Tuple[Hash, Hash]] = set()
         for u in emb:
             for v in emb[u]:
                 if (u, v) in visited:
                     continue
-                try:
-                    cycle = list(emb.traverse_face(u, v))
-                except Exception:
-                    continue
-                if len(cycle) >= 2:
-                    for i in range(len(cycle)):
-                        a = cycle[i]; b = cycle[(i + 1) % len(cycle)]
-                        visited.add((a, b))
-                    # keep only proper polygons
-                    cycle = PlanarBasic._simplify_face_cycle(cycle)
-                    if len(cycle) >= 3:
-                        faces.append(cycle)
-        return faces
+                cyc = list(emb.traverse_face(u, v, mark_half_edges=visited))
+                # drop closing duplicate and require a proper polygon (>=3)
+                if len(cyc) > 1 and cyc[0] == cyc[-1]:
+                    cyc = cyc[:-1]
+                if len(cyc) >= 3:
+                    faces.append(cyc)
 
-    @staticmethod
-    def _faces_from_cycles_proxy(G: nx.Graph) -> List[List[Hash]]:
-        """Fallback: use a simple cycle basis as a proxy (approximation)."""
-        try:
-            basis = nx.cycle_basis(G)
-        except Exception:
-            basis = []
-        return [list(cyc) for cyc in basis if len(cyc) >= 3]
+        if not faces:
+            return [], None
 
-    @staticmethod
-    def _faces_from_pos(G: nx.Graph, pos: Dict[Hash, Tuple[float, float]]) -> List[List[Hash]]:
-        """
-        Geometry-driven face walking (clockwise DCEL) using node coordinates `pos`.
+        # Heuristic for outer: face with the most distinct vertices
+        outer_idx = max(range(len(faces)), key=lambda i: len(set(faces[i])))
+        return faces, outer_idx
 
-        For each directed half-edge (u->v), we take the face on the right by picking,
-        at vertex v, the neighbor w that is immediately clockwise from u around v.
-        """
-        # Precompute clockwise neighbor orderings
-        cw_neighbors: Dict[Hash, List[Hash]] = {}
-        for v in G.nodes():
-            x0, y0 = pos[v]
-            neigh = list(G.neighbors(v))
-            neigh.sort(
-                key=lambda u: math.atan2(pos[u][1] - y0, pos[u][0] - x0),
-                reverse=True,  # descending angle = clockwise
-            )
-            cw_neighbors[v] = neigh
-
-        faces: List[List[Hash]] = []
-        visited_half_edges: Set[Tuple[Hash, Hash]] = set()
-
-        for u in G.nodes():
-            for v in cw_neighbors[u]:
-                if (u, v) in visited_half_edges:
-                    continue
-
-                # traverse one face to the right of half-edge (u->v)
-                face: List[Hash] = []
-                a, b = u, v
-                while True:
-                    visited_half_edges.add((a, b))
-                    face.append(a)
-                    nb = cw_neighbors[b]
-                    # find index of 'a' in cw order around 'b'
-                    try:
-                        idx = nb.index(a)
-                    except ValueError:
-                        break  # disconnected / inconsistent
-                    # clockwise next (right turn)
-                    c = nb[(idx - 1) % len(nb)]
-                    a, b = b, c
-                    if (a, b) == (u, v):
-                        break
-
-                face = PlanarBasic._simplify_face_cycle(face)
-                if len(face) >= 3:
-                    faces.append(face)                
-
-        return faces
 
     # --------------------
-    # Helpers — geometry & canonicalization
+    # Minimal helper set (all used)
     # --------------------
     @staticmethod
-    def _polygon_area(face: Sequence[Hash], pos: Dict[Hash, Sequence[float]]) -> float:
-        area = 0.0
-        for i in range(len(face)):
-            x1, y1 = pos[face[i]]
-            x2, y2 = pos[face[(i + 1) % len(face)]]
-            area += x1 * y2 - x2 * y1
-        return 0.5 * area
+    def _sorted_edge(u: Hash, v: Hash) -> Tuple[Hash, Hash]:
+        return (u, v) if u <= v else (v, u)
 
+    @staticmethod
+    def _edges_in_cycle(cycle: Sequence[Hash]):
+        n = len(cycle)
+        for i in range(n):
+            u = cycle[i]
+            v = cycle[(i + 1) % n]
+            yield PlanarBasic._sorted_edge(u, v)
+
+      
+    @staticmethod
+    def _decompose_face_by_allowed_chords(face: List[Hash], G: nx.Graph) -> List[List[Hash]]:
+        """
+        Split a face boundary into smaller chordless cycles using only existing
+        graph edges between non-consecutive boundary vertices (purely topological).
+        """
+        n = len(face)
+        if n <= 3:
+            return [face[:]]
+
+        edges_set = {PlanarBasic._sorted_edge(*e) for e in G.edges}
+        idxs = list(range(n))
+
+        def solve(indices: List[int]) -> List[List[Hash]]:
+            m = len(indices)
+            if m <= 3:
+                return [[face[i] for i in indices]]
+
+            # eligible chords are nonconsecutive pairs on this fragment that exist as edges
+            allowed = []
+            for ai in range(m):
+                for aj in range(ai + 2, m):
+                    if ai == 0 and aj == m - 1:
+                        continue  # wraparound neighbors are consecutive
+                    u = face[indices[ai]]
+                    v = face[indices[aj]]
+                    if PlanarBasic._sorted_edge(u, v) in edges_set:
+                        allowed.append((ai, aj))
+
+            if not allowed:
+                return [[face[i] for i in indices]]
+
+            # choose a chord that balances the two sub-polygons
+            def score(ai: int, aj: int):
+                left = aj - ai + 1
+                right = m - (aj - ai) + 1
+                return (max(left, right), min(left, right))
+
+            ai, aj = min(allowed, key=lambda p: score(*p))
+            left = indices[ai:aj + 1]
+            right = indices[aj:] + indices[:ai + 1]
+            return solve(left) + solve(right)
+
+        return solve(idxs)
+
+    @staticmethod
+    def _unique_cycles(cycles: List[List[Hash]]) -> List[List[Hash]]:
+        """
+        Deduplicate cycles up to rotation and reversal using _canon_cycle_key.
+        """
+        seen: Set[Tuple[Hash, ...]] = set()
+        out: List[List[Hash]] = []
+        for c in cycles:
+            if len(c) < 3:
+                continue
+            key = PlanarBasic._canon_cycle_key(c)
+            if key not in seen:
+                seen.add(key)
+                out.append(list(key))
+        return out
+
+    # --------------------
+    # Canonicalization helper (kept from your code)
+    # --------------------
     @staticmethod
     def _canon_cycle_key(cyc: Sequence[Hash]) -> Tuple[Hash, ...]:
         """
-        Canonical key for a cycle ignoring rotation and direction.
+        Canonical key for a cycle ignoring rotation and direction (uses str() labels).
         """
         s = list(cyc)
         if len(s) > 1 and s[0] == s[-1]:
             s = s[:-1]
 
-        # best rotation forward / backward by lexicographic node id (string)
         def best_rotation(seq: List[Hash]) -> Tuple[Hash, ...]:
             n = len(seq)
-            # find all indices with minimal label (by string) and pick the lexicographically smallest rotation
             labels = [str(x) for x in seq]
             min_label = min(labels)
             idxs = [i for i, lab in enumerate(labels) if lab == min_label]

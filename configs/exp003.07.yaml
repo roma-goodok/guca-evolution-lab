@@ -3,9 +3,9 @@
 
 # -------- Experiment meta --------
 experiment:
-  name: "exp001_hex_baseline"
+  name: "exp003.04_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: ""   # optional note; not used by Hydra
+  inherits: "exp003.05 but 3x times less mutation"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -22,7 +22,7 @@ hydra:
 
 # -------- Repro & parallelism --------
 seed: 12345
-n_workers: 0          # 0=serial; >0=multiprocessing
+n_workers: 8          # 0=serial; >0=multiprocessing
 
 # -------- State alphabet (labels; mapped to ints by order) --------
 states: [A, B, C, D, E, F, G, H]
@@ -30,10 +30,11 @@ states: [A, B, C, D, E, F, G, H]
 # -------- Machine config (single-node A via omission of init_graph.nodes) --------
 machine:
   _target_: guca.engine.config.MachineConfig
-  max_steps: 10
+  max_steps: 50
   max_vertices: 100
   start_state: A
   rng_seed: ${seed}
+  transcription: continuable
   nearest_search:
     _target_: guca.engine.config.NearestSearchCfg
     max_depth: 5
@@ -51,7 +52,7 @@ fitness:
     interior_deg6_weight: 2.0
     vertex_weight: -0.5
     shell_vertex_weight: -0.5
-    genome_len_bonus: false
+    genome_len_bonus: true
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true
     biconnected_gate_score: 3.02
@@ -75,24 +76,24 @@ ga:
   _target_: guca.ga.experiment.GAExperiment
   
   selection:
-    method: rank        # rank | tournament | roulette
-    random_ratio: 0.0   # portion of picks done uniformly at random
+    method: roulette        # rank | tournament | roulette
+    random_ratio: 0.05   # portion of picks done uniformly at random
 
   active:                           # legacy: active byte, p=0.10, +rotate 0.02
-    factor: 0.10
+    factor: 0.03
     kind: byte
-    rotate_extra_pb: 0.20
+    rotate_extra_pb: 0.07
 
   passive:                          # legacy: passive allbytes, p=0.50, +rotate 0.10
-    factor: 0.50
+    factor: 0.10
     kind: allbytes
-    rotate_extra_pb: 0.20
+    rotate_extra_pb: 0.07
 
   structuralx:
-    insert_active_pb: 0.10
-    remove_inactive_pb: 0.10
+    insert_active_pb: 0.03
+    remove_inactive_pb: 0.03
     remove_inactive_min_len: 100
-    duplicate_head_pb: 0.20
+    duplicate_head_pb: 0.07
 
   encoding:
     sanitize_on_decode: true   # default off (C#-style)
@@ -104,8 +105,8 @@ ga:
   # Core GA parameters
   pop_size: 40
   generations: 20
-  cx_pb: 0.8
-  mut_pb: 0.8
+  cx_pb: 0.5
+  mut_pb: 0.2
   tournament_k: 3
   elitism: 2
 
@@ -116,17 +117,17 @@ ga:
 
   # Structural mutation rates
   structural:
-    insert_pb: 0.5
-    delete_pb: 0.15
-    duplicate_pb: 0.10
+    insert_pb: 0.1 # 0.5
+    delete_pb: 0.1
+    duplicate_pb: 0.05 # 0.10
 
   # Field mutation regime
   field:
-    bitflip_pb: 0.10
-    byte_pb: 0.05
-    allbytes_pb: 0.02
-    rotate_pb: 0.05
-    enum_delta_pb: 0.15
+    bitflip_pb: 0.03
+    byte_pb: 0.02
+    allbytes_pb: 0.005
+    rotate_pb: 0.01
+    enum_delta_pb: 0.05
 
   # Checkpointing
   checkpoint:

@@ -4,10 +4,10 @@
 
 machine:
   start_state: A
-  transcription: resettable
+  transcription: resettable #continuable
   count_compare: range
   max_vertices: 2000
-  max_steps: 120
+  max_steps: 121
 
   nearest_search:
     max_depth: 2          # int >= 1 (default: 2)

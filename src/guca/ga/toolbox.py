@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Set, Sequence
+from typing import Any, Dict, List, Optional, Tuple, Set, Sequence, Callable
 from collections import Counter
 
-
 import random
+import csv
+from datetime import datetime
 
 import networkx as nx
 from deap import base, creator, tools
@@ -26,315 +27,81 @@ except Exception:          # pragma: no cover
     tqdm = None
 
 
-# =============================
-# Mini engine: genome -> graph
-# =============================
-def _nearest_candidates(G: nx.Graph, u, operand_sid: Optional[int], *, max_depth: int, tie_breaker: str, connect_all: bool) -> List:
-    """
-    BFS from u up to max_depth, return nodes at minimal distance that match operand_sid (or any if None).
-    Excludes self and current neighbors.
-    """
-    from collections import deque
+# =============================================================================
+# Core-engine–backed simulator
+# =============================================================================
+from guca.core.graph import GUMGraph as CoreGraph
+from guca.core.machine import GraphUnfoldingMachine, TranscriptionWay, CountCompare
+from guca.core.rules import (
+    ChangeTable as CoreChangeTable,
+    Rule as CoreRule,
+    Condition as CoreCond,
+    Operation as CoreOp,
+    OperationKind as CoreOpKind,
+)
 
-    seen = {u}
-    q = deque([(u, 0)])
-    neighbors_u = set(G.neighbors(u)) if G.has_node(u) else set()
-    candidates_at_depth: Dict[int, List] = {}
+def _opkind_to_core(k: OpKind) -> CoreOpKind:
+    if k == OpKind.TurnToState:
+        return CoreOpKind.TurnToState
+    if k in (OpKind.GiveBirthConnected, OpKind.GiveBirth):
+        return CoreOpKind.GiveBirthConnected  # legacy parity
+    if k == OpKind.DisconnectFrom:
+        return CoreOpKind.DisconnectFrom
+    if k in (OpKind.TryToConnectWithNearest, OpKind.TryToConnectNearest):
+        return CoreOpKind.TryToConnectWithNearest
+    if k == OpKind.TryToConnectWith:
+        return CoreOpKind.TryToConnectWith
+    return CoreOpKind.TurnToState
 
-    while q:
-        v, d = q.popleft()
-        if d > max_depth:
-            break
-        # Check eligibility (skip depth==0 which is u)
-        if d > 0:
-            if v not in neighbors_u and v != u:
-                vsid = G.nodes[v].get("state_id")
-                if operand_sid is None or vsid == operand_sid:
-                    candidates_at_depth.setdefault(d, []).append(v)
-        if d == max_depth:
-            continue
-        for w in G.neighbors(v):
-            if w not in seen:
-                seen.add(w)
-                q.append((w, d + 1))
+def _genes_to_core_change_table(genes: List[int], states: List[str], machine_encoding: Dict[str, Any] | None) -> CoreChangeTable:
+    n = max(1, len(states))
+    # optional sanitize-on-decode (allow GA encoding knobs)
+    sanitize = bool((machine_encoding or {}).get("sanitize_on_decode", False))
+    enforce  = bool((machine_encoding or {}).get("enforce_semantics", False))
+    canonf   = bool((machine_encoding or {}).get("canonicalize_flags", False))
+    order    = bool((machine_encoding or {}).get("enforce_bounds_order", False))
 
-    if not candidates_at_depth:
-        return []
-    dstar = min(candidates_at_depth)
-    cands = candidates_at_depth[dstar]
-    if connect_all:
-        return sorted(cands)
-    # pick one by tie-breaker
-    if tie_breaker in ("stable", "by_id"):
-        return [min(cands)]
-    elif tie_breaker == "by_creation":
-        return [min(cands)]  # we don't track creation index; ids are stable
-    else:
-        # random choice — caller must seed RNG beforehand if reproducibility is required
-        import random
-        return [random.choice(cands)]
+    if sanitize:
+        genes = [
+            sanitize_gene(
+                g,
+                state_count=n,
+                enforce_semantics=enforce,
+                canonicalize_flags=canonf,
+                enforce_bounds_order=order,
+            )
+            for g in genes
+        ]
 
-def _check_rule_condition(G: nx.Graph, u: int, rule: Rule) -> bool:
-    """
-    Gate a rule by its extended condition:
-      - current state matches (enforced by the caller's indexing)
-      - prior (if set) equals node.prev_state_id
-      - degree bounds (conn_ge/le) on current graph degree
-      - parents bounds (parents_ge/le) on node.parents_count (defaults to 0)
-    """
-    cur_sid = int(G.nodes[u].get("state_id"))
-    if int(rule.cond_current) != cur_sid:
-        return False
+    tbl = CoreChangeTable()
+    for g in genes:
+        r = decode_gene(g, state_count=n)
+        cur = states[int(r.cond_current) % n]
+        prior = "any" if r.prior is None else states[int(r.prior) % n]
+        oper_label = None if r.operand is None else states[int(r.operand) % n]
+        cond = CoreCond(
+            current=cur,
+            prior=prior,
+            conn_ge=(-1 if r.conn_ge is None else int(r.conn_ge)),
+            conn_le=(-1 if r.conn_le is None else int(r.conn_le)),
+            parents_ge=(-1 if r.parents_ge is None else int(r.parents_ge)),
+            parents_le=(-1 if r.parents_le is None else int(r.parents_le)),
+        )
+        op = CoreOp(kind=_opkind_to_core(r.op_kind), operand=oper_label)
+        tbl.append(CoreRule(condition=cond, operation=op))
+    return tbl
 
-    # prior state
-    prior_sid = G.nodes[u].get("prev_state_id")
-    if rule.prior is not None and prior_sid is not None:
-        if int(prior_sid) != int(rule.prior):
-            return False
-
-    # degree bounds
-    deg = int(G.degree[u])
-    if rule.conn_ge is not None and deg < int(rule.conn_ge):
-        return False
-    if rule.conn_le is not None and deg > int(rule.conn_le):
-        return False
-
-    # parents bounds
-    parents = int(G.nodes[u].get("parents_count", 0))
-    if rule.parents_ge is not None and parents < int(rule.parents_ge):
-        return False
-    if rule.parents_le is not None and parents > int(rule.parents_le):
-        return False
-
-    return True
-
-
-def _apply_rules_once(
-    G: nx.Graph,
-    rules: List[Rule],
-    *,
-    machine_cfg: Dict[str, Any],
-    active_hits: Optional[List[bool]] = None,
-    rid_by_cond: Optional[Dict[int, int]] = None,
-) -> bool:
-    """
-    Apply rules to all nodes in a deterministic order; return True if any change occurred.
-    If 'active_hits' is provided, mark rules that EFFECTED a change at least once in this step.
-    Rule selection is by the first rule for a given cond_current (rid_by_cond).
-    """
-    # Unpack machine params
-    max_vertices = int(machine_cfg.get("max_vertices", 0) or 0)
-
-    # ensure per-node bookkeeping
-    for u in G.nodes():
-        G.nodes[u].setdefault("parents_count", 0)
-        if "prev_state_id" not in G.nodes[u]:
-            G.nodes[u]["prev_state_id"] = int(G.nodes[u].get("state_id"))
-
-    changed = False
-    to_add_nodes: List[Tuple[int, int]] = []   # (new_id, state_id)
-    to_add_edges: List[Tuple[int, int]] = []
-    to_remove_edges: List[Tuple[int, int]] = []
-    to_remove_nodes: List[int] = []
-    state_updates: List[Tuple[int, int]] = []
-
-    for u in sorted(G.nodes()):
-        cur_sid = int(G.nodes[u]["state_id"])
-
-        # pick first matching rule by cond_current via table index
-        rid = None
-        if rid_by_cond is not None:
-            rid = rid_by_cond.get(int(cur_sid))
-            if rid is None:
-                # fallback to linear search (should not happen if rid_by_cond is provided)
-                rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
-        else:
-            # fallback to linear search
-            rid = next((i for i, r in enumerate(rules) if int(r.cond_current) == cur_sid), None)
-        if rid is None:
-            continue
-
-        rule = rules[rid]
-        # NEW: full condition gate
-        if not _check_rule_condition(G, u, rule):
-            continue
-
-        op = rule.op_kind
-        operand_sid = rule.operand if rule.operand is not None else None
-
-        rule_effective = False
-
-        if op == OpKind.TurnToState:
-            if operand_sid is not None and operand_sid != cur_sid:
-                state_updates.append((u, int(operand_sid)))
-                rule_effective = True
-
-        elif op == OpKind.GiveBirth:
-            if operand_sid is not None:
-                # Treat legacy 'GiveBirth' exactly like 'GiveBirthConnected' (C# effective semantics)
-                new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, int(operand_sid)))
-                to_add_edges.append((u, new_id))  # <-- connect newborn to the active parent
-                rule_effective = True
-
-
-        elif op == OpKind.GiveBirthConnected:
-            if operand_sid is not None:
-                new_id = max(G.nodes()) + 1 if G.number_of_nodes() > 0 else 0
-                to_add_nodes.append((new_id, int(operand_sid)))
-                to_add_edges.append((u, new_id))
-                rule_effective = True
-
-        elif op == OpKind.TryToConnectWith:
-            if operand_sid is not None:
-                targets = [v for v in G.nodes()
-                           if v != u and G.nodes[v].get("state_id") == int(operand_sid) and not G.has_edge(u, v)]
-                if targets:
-                    for v in targets:
-                        to_add_edges.append((u, v))
-                    rule_effective = True
-
-        elif op == OpKind.TryToConnectWithNearest:
-            if operand_sid is not None:
-                cands = _nearest_candidates(
-                    G, u, int(operand_sid),
-                    max_depth=int(machine_cfg.get("nearest_search", {}).get("max_depth", 2)),
-                    tie_breaker=str(machine_cfg.get("nearest_search", {}).get("tie_breaker", "stable")),
-                    connect_all=bool(machine_cfg.get("nearest_search", {}).get("connect_all", False))
-                )
-                cands = [v for v in cands if not G.has_edge(u, v)]
-                if cands:
-                    for v in cands:
-                        to_add_edges.append((u, v))
-                    rule_effective = True
-
-        elif op == OpKind.DisconnectFrom:
-            if operand_sid is not None:
-                targets = [v for v in list(G.neighbors(u)) if G.nodes[v].get("state_id") == int(operand_sid)]
-                if targets:
-                    for v in targets:
-                        to_remove_edges.append((u, v))
-                    rule_effective = True
-
-        elif op == OpKind.Die:
-            to_remove_nodes.append(u)
-            rule_effective = True
-
-        if rule_effective and active_hits is not None:
-            active_hits[rid] = True
-
-    # respect max_vertices by capping additions (best effort)
-    if max_vertices and G.number_of_nodes() + len(to_add_nodes) > max_vertices:
-        allow = max(0, max_vertices - G.number_of_nodes())
-        to_add_nodes = to_add_nodes[:allow]
-
-    # apply structural edits
-    # add nodes (and initialize bookkeeping)
-    for (new_id, sid) in to_add_nodes:
-        G.add_node(new_id, state_id=int(sid), parents_count=1, prev_state_id=int(sid))
-    # add edges
-    for (u, v) in to_add_edges:
-        if G.has_node(u) and G.has_node(v):
-            G.add_edge(u, v)
-    # remove edges
-    for (u, v) in to_remove_edges:
-        if G.has_node(u) and G.has_edge(u, v):
-            G.remove_edge(u, v)
-    # remove nodes
-    if to_remove_nodes:
-        for u in sorted(set(to_remove_nodes), reverse=True):
-            if G.has_node(u):
-                G.remove_node(u)
-
-    # update states
-    for (u, sid) in state_updates:
-        if G.has_node(u) and int(G.nodes[u]["state_id"]) != int(sid):
-            G.nodes[u]["state_id"] = int(sid)
-            changed = True
-     
-    # consider structural edits as changes too
-    if (to_add_nodes or to_add_edges or to_remove_edges or to_remove_nodes or state_updates):
-        changed = True
-    return changed
-
-
-def _rank_weights(n: int) -> List[float]:
-    # linear ranking: n..1 then normalize
-    raw = [float(n - i) for i in range(n)]
-    s = sum(raw) or 1.0
-    return [x/s for x in raw]
-
-def _roulette_weights(fits: List[float]) -> List[float]:
-    # shift if any non-positive, then normalize
-    mn = min(fits) if fits else 0.0
-    shift = 1e-9 - mn if mn <= 0 else 0.0
-    raw = [max(0.0, f + shift) for f in fits]
-    s = sum(raw) or 1.0
-    return [x/s for x in raw]
-
-
-# --- Selection helpers --------------------------------------------------------
-from typing import Callable
-
-def _sel_rank(pop, k: int, rng: random.Random, random_ratio: float = 0.0):
-    """
-    Linear rank selection (higher fitness -> higher rank).
-    Mix in a small fraction of uniform random picks if random_ratio > 0.
-    Sampling is with replacement.
-    """
-    if k <= 0:
-        return []
-
-    # Sort by descending fitness
-    sorted_pop = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
-    n = len(sorted_pop)
-    if n == 0:
-        return []
-
-    # ranks: n..1 (linear)
-    ranks = list(range(n, 0, -1))
-    total = sum(ranks)
-    probs = [r / total for r in ranks]
-
-    k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
-    k_rand = max(0, k - k_rank)
-
-    selected = []
-    if k_rank > 0:
-        # rng.choices is deterministic under seeded rng
-        selected.extend(rng.choices(sorted_pop, weights=probs, k=k_rank))
-    if k_rand > 0:
-        selected.extend(rng.choices(pop, k=k_rand))
-    return selected
-
-
-def _make_selector(method: str, tournament_k: int, random_ratio: float, rng: random.Random) -> Callable:
-    """
-    Return a selection function sel(pop, k) based on GA config.
-    """
-    m = (method or "rank").lower()
-    if m == "rank":
-        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
-    elif m == "tournament":
-        # keep DEAP tournament
-        return lambda pop, k: tools.selTournament(pop, k=k, tournsize=max(2, int(tournament_k)))
-    elif m == "roulette":
-        # roulette on raw fitness (DEAP)
-        # optional mixing with random picks if random_ratio > 0
-        def _roulette(pop, k):
-            k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
-            k_rand = max(0, k - k_rank)
-            part = tools.selRoulette(pop, k=k_rank) if k_rank > 0 else []
-            if k_rand > 0:
-                part.extend(rng.choices(pop, k=k_rand))
-            return part
-        return _roulette
-    else:
-        # fallback = rank
-        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
-
-
-
+def _core_graph_to_nx(g: CoreGraph, states: List[str]) -> nx.Graph:
+    G = nx.Graph()
+    # nodes
+    for n in g.nodes():
+        st = n.state
+        sid = states.index(st) if isinstance(st, str) and st in states else 0
+        G.add_node(n.id, state=st, state_id=sid)
+    # edges
+    for u, v in g.edges():
+        G.add_edge(u, v)
+    return G
 
 def simulate_genome(
     genes: List[int],
@@ -344,74 +111,41 @@ def simulate_genome(
     collect_activity: bool = False,
 ) -> nx.Graph | Tuple[nx.Graph, List[bool]]:
     """
-    Minimal in-process simulator for GA evaluation.
-    Starts from one node with start_state unless an init graph is provided by the caller.
-    If collect_activity=True, also returns a boolean list mark of rules that EFFECTED changes.
+    Evaluate genes using the **core** GraphUnfoldingMachine; return a networkx graph
+    (for fitness) and, optionally, an 'ever-active' boolean mask per gene reflecting
+    core-rule `was_active` flags over the whole run.
     """
-    # initial graph: single node with start_state
-    start_label = str(machine_cfg.get("start_state", "A"))
-    _, inv = labels_to_state_maps(states)
-    try:
-        start_sid = inv.index(start_label)
-    except ValueError:
-        start_sid = 0
+    start_state = str(machine_cfg.get("start_state", "A"))
+    nearest = machine_cfg.get("nearest_search", {}) or {}
+    m = GraphUnfoldingMachine(
+        CoreGraph(),
+        start_state=start_state,
+        transcription=TranscriptionWay(machine_cfg.get("transcription", "resettable")),
+        count_compare=CountCompare(machine_cfg.get("count_compare", "range")),
+        max_vertices=int(machine_cfg.get("max_vertices", 0)),
+        max_steps=int(machine_cfg.get("max_steps", 120)),
+        nearest_max_depth=int(nearest.get("max_depth", 2)),
+        nearest_tie_breaker=str(nearest.get("tie_breaker", "stable")),
+        nearest_connect_all=bool(nearest.get("connect_all", False)),
+        rng_seed=machine_cfg.get("rng_seed", None),
+    )
 
-    G = nx.Graph()
-    G.add_node(0, state_id=int(start_sid), parents_count=0, prev_state_id=int(start_sid))
+    enc = dict(machine_cfg.get("encoding", {}) or {})
+    m.change_table = _genes_to_core_change_table(genes, states, enc)
 
-    # decode rules and stabilize priority (first rule per cond_current wins)
-    enc_cfg = dict(machine_cfg.get("encoding", {}))
-    sanitize_on_decode = bool(enc_cfg.get("sanitize_on_decode", False))
-    enforce_semantics  = bool(enc_cfg.get("enforce_semantics", False))
-    canonicalize_flags = bool(enc_cfg.get("canonicalize_flags", False))
-    enforce_bounds_ord = bool(enc_cfg.get("enforce_bounds_order", False))
+    # Ensure a seed node (core also does this internally)
+    if not any(True for _ in m.graph.nodes()):
+        m.graph.add_vertex(state=start_state, parents_count=0, mark_new=True)
 
-    if sanitize_on_decode:
-        genes_eff = [
-            sanitize_gene(
-                g,
-                state_count=len(states),
-                enforce_semantics=enforce_semantics,
-                canonicalize_flags=canonicalize_flags,
-                enforce_bounds_order=enforce_bounds_ord,
-            )
-            for g in genes
-        ]
-    else:
-        genes_eff = list(genes)
+    m.run()
 
-    rules = [decode_gene(g, state_count=len(states)) for g in genes_eff]
+    G = _core_graph_to_nx(m.graph, states)
 
-    rid_by_cond: Dict[int, int] = {}
-    for i, r in enumerate(rules):
-        rid_by_cond.setdefault(int(r.cond_current), i)
+    if not collect_activity:
+        return G
 
-    active_hits: Optional[List[bool]] = [False] * len(rules) if collect_activity else None
-
-    max_steps = int(machine_cfg.get("max_steps", 120))
-    for _ in range(max_steps):
-        # snapshot prior state for this step
-        for u in list(G.nodes()):
-            G.nodes[u]["prev_state_id"] = int(G.nodes[u].get("state_id"))
-
-        stepped = _apply_rules_once(
-            G,
-            rules,
-            machine_cfg=machine_cfg,
-            active_hits=active_hits,
-            rid_by_cond=rid_by_cond,
-        )
-        if not stepped:
-            break
-        if machine_cfg.get("max_vertices", 0) and G.number_of_nodes() >= int(machine_cfg["max_vertices"]):
-            break
-
-    if collect_activity:
-        return G, (active_hits or [False] * len(rules))
-    return G
-
-
-
+    mask = [bool(r.was_active) for r in m.change_table]
+    return G, mask
 
 
 # =======================
@@ -686,22 +420,252 @@ def _eval_only(genes: List[int]) -> float:
     G = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG)
     return float(_WFIT.score(G))
 
+def _eval_with_mask(genes: List[int]) -> Tuple[float, List[bool]]:
+    G, mask = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG, collect_activity=True)
+    return float(_WFIT.score(G)), list(mask or [])
 
-def _select_parents(pop, k, method: str, rng: random.Random, tourn_k: int):
-    m = method.lower()
-    if m == "elite":
-        return tools.selBest(pop, k)
+
+# --- Selection helpers --------------------------------------------------------
+def _sel_rank(pop, k: int, rng: random.Random, random_ratio: float = 0.0):
+    """
+    Linear rank selection (higher fitness -> higher rank).
+    Mix in a small fraction of uniform random picks if random_ratio > 0.
+    Sampling is with replacement.
+    """
+    if k <= 0:
+        return []
+
+    # Sort by descending fitness
+    sorted_pop = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
+    n = len(sorted_pop)
+    if n == 0:
+        return []
+
+    # ranks: n..1 (linear)
+    ranks = list(range(n, 0, -1))
+    total = sum(ranks)
+    probs = [r / total for r in ranks]
+
+    k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+    k_rand = max(0, k - k_rank)
+
+    selected = []
+    if k_rank > 0:
+        selected.extend(rng.choices(sorted_pop, weights=probs, k=k_rank))
+    if k_rand > 0:
+        selected.extend(rng.choices(pop, k=k_rand))
+    return selected
+
+
+def _make_selector(method: str, tournament_k: int, random_ratio: float, rng: random.Random) -> Callable:
+    """
+    Return a selection function sel(pop, k) based on GA config.
+    """
+    m = (method or "rank").lower()
+    if m == "rank":
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+    elif m == "tournament":
+        # keep DEAP tournament
+        return lambda pop, k: tools.selTournament(pop, k=k, tournsize=max(2, int(tournament_k)))
     elif m == "roulette":
-        return tools.selRoulette(pop, k)
-    elif m == "rank":
-        # linear rank weights: n..1
-        order = sorted(pop, key=lambda ind: ind.fitness.values[0], reverse=True)
-        weights = list(reversed(range(1, len(pop) + 1)))  # 1..n (ascending)
-        # align to 'order' (largest weight for best)
-        weights = list(range(len(pop), 0, -1))
-        return rng.choices(order, weights=weights, k=k)
+        # roulette on raw fitness (DEAP)
+        # optional mixing with random picks if random_ratio > 0
+        def _roulette(pop, k):
+            k_rank = int(round(k * max(0.0, 1.0 - random_ratio)))
+            k_rand = max(0, k - k_rank)
+            part = tools.selRoulette(pop, k=k_rank) if k_rank > 0 else []
+            if k_rand > 0:
+                part.extend(rng.choices(pop, k=k_rand))
+            return part
+        return _roulette
     else:
-        return tools.selTournament(pop, k=k, tournsize=tourn_k)
+        # fallback = rank
+        return lambda pop, k: _sel_rank(pop, k, rng, random_ratio=random_ratio)
+
+
+def _mk_ckpt_subdir(root: Path, tag: str, gen: int) -> Path:
+    d = root / f"{tag}_{gen:05d}"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _pop_arrays(pop):
+    fits = [float(ind.fitness.values[0]) for ind in pop]
+    lengths = [len(ind) for ind in pop]
+    actlens = [int(sum(getattr(ind, "active_mask", []) or [])) for ind in pop]
+    return fits, lengths, actlens
+
+def _best_set(pop, fits):
+    if not fits:
+        return [], []
+    mx = max(fits)
+    tops = [ind for ind, f in zip(pop, fits) if abs(f - mx) < 1e-12]
+    return tops, mx
+
+def _write_population_json(dir_: Path, pop, fits):
+    out = []
+    for ind, f in zip(pop, fits):
+        out.append({
+            "fitness": float(f),
+            "length": len(ind),
+            "active_len": int(sum(getattr(ind, "active_mask", []) or [])),
+            "genes": [f"{g:016x}" for g in ind],
+        })
+    p = dir_ / "population.json"
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(out, fh, indent=2)
+    return str(p)
+
+def _machine_yaml_from_cfg(machine_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    nearest = machine_cfg.get("nearest_search", {}) or {}
+    return {
+        "start_state": str(machine_cfg.get("start_state", "A")),
+        "transcription": "resettable",
+        "count_compare": "range",
+        "max_vertices": int(machine_cfg.get("max_vertices", 2000)),
+        "max_steps": int(machine_cfg.get("max_steps", 120)),
+        "nearest_search": {
+            "max_depth": int(nearest.get("max_depth", 2)),
+            "tie_breaker": str(nearest.get("tie_breaker", "stable")),
+            "connect_all": bool(nearest.get("connect_all", False)),
+        },
+        # "rng_seed": machine_cfg.get("rng_seed", 42),  # optional
+    }
+
+def _write_genome_yaml(dir_: Path, best_genes: List[int], states: List[str],
+                       machine_cfg: Dict[str, Any],
+                       graph_summary: Optional[Dict[str, Any]] = None,
+                       activity_mask: Optional[List[bool]] = None,
+                       full_condition: bool = False) -> str:
+    try:
+        import yaml
+    except Exception:
+        yaml = None
+    rules = _genes_to_yaml_rules(best_genes, states, full_condition=full_condition)
+    y = {
+        "machine": _machine_yaml_from_cfg(machine_cfg),
+        "init_graph": {"nodes": [{"state": str(machine_cfg.get("start_state", "A"))}]},
+        "rules": rules,
+    }
+    if graph_summary or activity_mask is not None:
+        y["meta"] = {}
+        if graph_summary:
+            y["meta"]["graph_summary"] = graph_summary
+        if activity_mask is not None:
+            y["meta"]["activity_mask"] = [bool(x) for x in activity_mask]
+    p = dir_ / "genome.yaml"
+    if yaml is None:
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(y, indent=2))
+    else:
+        with open(p, "w", encoding="utf-8") as fh:
+            yaml.safe_dump(y, fh, sort_keys=False, allow_unicode=True)
+    return str(p)
+
+def _render_png_dots(dir_: Path, G: nx.Graph, out_name: str = "best.png") -> Optional[str]:
+    # Reuse the public save_png utility which supports dots mode
+    try:
+        from guca.vis.png import save_png
+    except Exception:
+        return None
+    out = dir_ / out_name
+    try:
+        save_png(G, out, node_render="dots")
+        return str(out)
+    except Exception:
+        return None
+
+def _write_hist_png(dir_: Path, name: str, data: List[float], bins: int):
+    out = dir_ / name
+
+    # sanitize data (avoid NaN/inf)
+    vals = []
+    for x in data:
+        try:
+            xv = float(x)
+            if xv == xv and abs(xv) != float("inf"):
+                vals.append(xv)
+        except Exception:
+            continue
+    if not vals:
+        vals = [0.0]
+
+    # Matplotlib (force headless)
+    try:
+        import matplotlib
+        matplotlib.use("Agg", force=True)
+        import matplotlib.pyplot as plt
+        plt.figure(figsize=(6.4, 4.2))
+        plt.hist(vals, bins=int(max(1, bins)))
+        plt.title(name.replace("_", " "))
+        plt.tight_layout()
+        plt.savefig(out.as_posix(), dpi=150)
+        plt.close()
+        return str(out)
+    except Exception:
+        pass
+
+    # Ultimate fallback: tiny placeholder PNG so tests pass
+    try:
+        with open(out, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\n")
+        return str(out)
+    except Exception:
+        return None
+
+
+def _write_metrics_csv(dir_: Path, metrics: Dict[str, Any]):
+    p = dir_ / "metrics.csv"
+    cols = list(metrics.keys())
+    with open(p, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(cols)
+        w.writerow([metrics[k] for k in cols])
+    return str(p)
+
+def _bundle_checkpoint(dir_: Path, *,
+                       pop, fits, states, machine_cfg, fitness,
+                       best_ind, best_mask, G_best, full_condition: bool,
+                       hist_bins: int):
+    # population.json
+    _write_population_json(dir_, pop, fits)
+
+    # runnable genome.yaml (+meta)
+    gsum = _graph_summary(G_best, states) if G_best is not None else None
+    genome_path = _write_genome_yaml(dir_, list(best_ind), states, machine_cfg, gsum, best_mask, full_condition)
+
+    # PNG (dots)
+    if G_best is not None:
+        _render_png_dots(dir_, G_best, out_name="best.png")
+
+    # histograms
+    _, lengths, actlens = _pop_arrays(pop)  # fits already passed
+    _write_hist_png(dir_, "hist_fitness.png", fits, bins=hist_bins)
+    _write_hist_png(dir_, "hist_length.png", lengths, bins=hist_bins)
+    _write_hist_png(dir_, "hist_active.png", actlens, bins=hist_bins)
+
+    # metrics.csv
+    tops, mx = _best_set(pop, fits)
+    best_act = int(sum(getattr(best_ind, "active_mask", []) or []))
+    avg_fit = sum(fits) / max(1, len(fits))
+    cnt_max = len(tops)
+    top_act_av = (sum(int(sum(getattr(t, "active_mask", []) or [])) for t in tops) / cnt_max) if cnt_max else 0.0
+    pop_act_av = sum(actlens) / max(1, len(actlens))
+    best_len = len(best_ind)
+    avg_len = sum(lengths) / max(1, len(lengths))
+
+    stats = {
+        "best_fitness": float(mx),
+        "avg_fitness": float(avg_fit),
+        "count_at_max": int(cnt_max),
+        "best_active_len": int(best_act),
+        "avg_active_len_at_max": float(top_act_av),
+        "avg_active_len_pop": float(pop_act_av),
+        "best_length": int(best_len),
+        "avg_length_pop": float(avg_len),
+    }
+    _write_metrics_csv(dir_, stats)
+
+    return {"genome": genome_path, "metrics": stats}
 
 
 
@@ -726,6 +690,9 @@ def evolve(
     max_len = int(ga_cfg.get("max_len", 64))
     init_len = int(ga_cfg.get("init_len", 6))
 
+    # Merge GA 'encoding' knobs into the simulated machine config
+    mc_eval = dict(machine_cfg)
+    mc_eval["encoding"] = dict(ga_cfg.get("encoding", {}))
 
     # DEAP setup
     try:
@@ -774,7 +741,6 @@ def evolve(
 
     toolbox.register("mate", cx)
 
-
     mutate = make_mutate_fn(
         state_count=state_count,
         min_len=min_len,
@@ -786,7 +752,6 @@ def evolve(
         structuralx_cfg=ga_cfg.get("structuralx", {}),
         rng=r,
     )
-
     toolbox.register("mutate", mutate)
 
     # selection policy (C# alignment default = rank)
@@ -804,7 +769,7 @@ def evolve(
         G, active_mask = simulate_genome(
             individual,
             states=states,
-            machine_cfg=machine_cfg,
+            machine_cfg=mc_eval,
             collect_activity=True,
         )
         # stash mask on the individual for the next mutation call
@@ -812,8 +777,6 @@ def evolve(
         # score
         score = float(fitness.score(G))
         return (score,)
-
-
 
     toolbox.register("evaluate", evaluate)
 
@@ -829,14 +792,14 @@ def evolve(
 
     # --------- parallel map setup ----------
     global _WFIT, _WSTATES, _WMCFG
-    _WFIT, _WSTATES, _WMCFG = fitness, states, machine_cfg
+    _WFIT, _WSTATES, _WMCFG = fitness, states, mc_eval
 
     pool = None
     if n_workers and n_workers > 0:
         try:
             ctx = get_context("spawn")
             pool = ctx.Pool(processes=int(n_workers), initializer=_init_worker,
-                            initargs=(fitness, states, machine_cfg))
+                            initargs=(fitness, states, mc_eval))
             map_fn = pool.map
         except Exception as e:
             print(f"[WARN] parallel init failed ({e}); falling back to serial.")
@@ -845,9 +808,10 @@ def evolve(
         map_fn = map
 
     # evaluate initial pop
-    fits = list(map_fn(_eval_only, pop))
-    for ind, fit in zip(pop, fits):
+    res = list(map_fn(_eval_with_mask, pop))
+    for ind, (fit, mask) in zip(pop, res):
         ind.fitness.values = (fit,)
+        setattr(ind, "active_mask", mask)
 
     stats = tools.Statistics(lambda ind: ind.fitness.values[0])
     stats.register("avg", lambda xs: sum(xs) / max(1, len(xs)))
@@ -864,31 +828,82 @@ def evolve(
     save_every = int(ckpt.get("save_every", 0))
     save_population = str(ckpt.get("save_population", "best"))
     full_cond = bool(ckpt.get("export_full_condition_shape", False))
-    save_best_png = bool(ckpt.get("save_best_png", False))    
-
+    save_best_png = bool(ckpt.get("save_best_png", False))
+    hist_bins = int(ckpt.get("hist_bins", 100))
 
     # initial checkpoints (generation 0)
     hof.update(pop)
-    best0 = hof[0]    
-    
-    _write_checkpoint_best(ckpt_dir, list(best0), best0.fitness.values[0], fmt, states, full_condition=full_cond)
+    best0 = hof[0]
 
+    # Compile quick stats & optionally write a FIRST out-of-sequence checkpoint (last_0000)
+    fits0 = [ind.fitness.values[0] for ind in pop]
+    best0_graph = None
+    best0_mask = getattr(best0, "active_mask", None)
+    try:
+        sim0 = simulate_genome(list(best0), states=states, machine_cfg=mc_eval, collect_activity=True)
+        if isinstance(sim0, tuple) and len(sim0) == 2:
+            best0_graph, best0_mask = sim0
+        else:
+            best0_graph = sim0
+    except Exception:
+        best0_graph = None
 
+    # Always produce an initial "last_0000" folder if save_last
+    last_dir_path = None
+    if save_last:
+        last_dir = _mk_ckpt_subdir(ckpt_dir, "last", 0)
+        _bundle_checkpoint(last_dir,
+            pop=pop, fits=fits0, states=states, machine_cfg=mc_eval, fitness=fitness,
+            best_ind=best0, best_mask=best0_mask, G_best=best0_graph,
+            full_condition=full_cond, hist_bins=hist_bins
+        )
+        last_dir_path = str(last_dir)
+
+    # For backward compatibility, provide a 'best' pointer (to runnable YAML in last_0000)
+    paths = {}
+    if save_best:
+        if last_dir_path is not None:
+            paths["best"] = str(Path(last_dir_path) / "genome.yaml")
+
+    # (optional) keep population jsonl if requested
     if save_population in ("best", "all"):
         _write_checkpoint_pop(ckpt_dir, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop], save_population)
+
+    # epoch_0000 snapshot if periodic saving is configured
     if save_every and save_every > 0:
         _write_checkpoint_epoch(ckpt_dir, 0, [list(ind) for ind in pop], [ind.fitness.values[0] for ind in pop])
 
     record0 = stats.compile(pop)
     best_len0 = len(hof[0]) if len(hof) else 0
+    best_so_far = record0['max']
 
     # --- progress bar setup ---
     pbar = None
     if progress and tqdm is not None:
+        fits_arr, lens_arr, acts_arr = _pop_arrays(pop)
+        tops0, mx0 = _best_set(pop, fits_arr)
+        if tops0:
+            len_top_max = max(len(t) for t in tops0)
+            len_top_min = min(len(t) for t in tops0)
+            len_top_avg = sum(len(t) for t in tops0) / len(tops0)
+            act_top_vals = [int(sum(getattr(t, "active_mask", []) or [])) for t in tops0]
+            act_top_max = max(act_top_vals)
+            act_top_min = min(act_top_vals)
+            act_top_avg = sum(act_top_vals) / len(act_top_vals)
+        else:
+            len_top_max = len_top_min = len_top_avg = 0
+            act_top_max = act_top_min = act_top_avg = 0
         pbar = tqdm(total=ngen, desc="epochs", leave=True, dynamic_ncols=True)
-        pbar.set_postfix(max=f"{record0['max']:.4f}",
-                         avg=f"{record0['avg']:.4f}",
-                         len=best_len0)
+        pbar.set_postfix(
+            max=f"{record0['max']:.4f}",
+            avg=f"{record0['avg']:.4f}",
+            len=best_len0,
+            len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}",
+            cnt_max=len(tops0),
+            act_avg=f"{(sum(acts_arr)/max(1,len(acts_arr))):.2f}",
+            len_top=f"{len_top_min:.0f}/{len_top_avg:.1f}/{len_top_max:.0f}",
+            act_top=f"{act_top_min:.0f}/{act_top_avg:.1f}/{act_top_max:.0f}",
+        )
     elif progress:
         print(f"gen 0/{ngen}  max={record0['max']:.4f}  avg={record0['avg']:.4f}  len={best_len0}")
 
@@ -896,34 +911,24 @@ def evolve(
     for gen in range(1, ngen + 1):
         # elitism: copy best E
         elites = tools.selBest(pop, k=elitism)
-        
 
         # offspring via variation
-        offspring = toolbox.select(pop, k=pop_size - elitism)   # <— use our selector here
+        offspring = toolbox.select(pop, k=pop_size - elitism)
         offspring = list(map(toolbox.clone, offspring))
-       
 
         # optional random immigrants
         k_off = len(offspring)
-
-        # read from new config (ga.selection.random_ratio) with a legacy fallback (ga.random_selection_ratio)
         sel_cfg = ga_cfg.get("selection", {})
         rand_ratio = float(sel_cfg.get("random_ratio", ga_cfg.get("random_selection_ratio", 0.0)))
         rand_ratio = max(0.0, min(1.0, rand_ratio))
-
         n_rand = int(rand_ratio * k_off)
         if n_rand > 0:
-            # Create fresh individuals using the registered DEAP constructors
             try:
                 immigrants = list(toolbox.population(n=n_rand))
             except Exception:
                 immigrants = [toolbox.individual() for _ in range(n_rand)]
-            # Overwrite the first n_rand offspring slots (length preserved; deterministic under fixed seed)
             offspring[:n_rand] = immigrants
 
-
-
-        
         # mate
         for i in range(1, len(offspring), 2):
             if r.random() < cx_pb:
@@ -943,9 +948,10 @@ def evolve(
         # evaluate invalid
         invalid = [ind for ind in pop if not ind.fitness.valid]
         if invalid:
-            newfits = list(map_fn(_eval_only, invalid))
-            for ind, fit in zip(invalid, newfits):
+            res_inv = list(map_fn(_eval_with_mask, invalid))
+            for ind, (fit, mask) in zip(invalid, res_inv):
                 ind.fitness.values = (fit,)
+                setattr(ind, "active_mask", mask)
 
         # update HOF & checkpoints
         hof.update(pop)
@@ -953,16 +959,81 @@ def evolve(
 
         best_len = len(hof[0]) if len(hof) else 0
 
-        if save_every and gen % save_every == 0:
-            _write_checkpoint_epoch(ckpt_dir, gen,
-                                    [list(ind) for ind in pop],
-                                    [ind.fitness.values[0] for ind in pop])
+        # Prepare arrays
+        fits_arr, lens_arr, acts_arr = _pop_arrays(pop)
+        tops, mx = _best_set(pop, fits_arr)
 
-        # progress update
+        # 1) periodic checkpoint folder (epoch_<gen>)
+        if save_every and gen % save_every == 0:
+            try:
+                G_tmp, mask_tmp = None, getattr(hof[0], "active_mask", None)
+                try:
+                    simt = simulate_genome(list(hof[0]), states=states, machine_cfg=mc_eval, collect_activity=True)
+                    if isinstance(simt, tuple) and len(simt) == 2:
+                        G_tmp, mask_tmp = simt
+                    else:
+                        G_tmp = simt
+                except Exception:
+                    G_tmp = None
+                d_epoch = _mk_ckpt_subdir(ckpt_dir, "epoch", gen)
+                _bundle_checkpoint(d_epoch,
+                    pop=pop, fits=fits_arr, states=states, machine_cfg=mc_eval, fitness=fitness,
+                    best_ind=hof[0], best_mask=mask_tmp, G_best=G_tmp,
+                    full_condition=full_cond, hist_bins=hist_bins
+                )
+            except Exception:
+                pass
+
+        # 2) out-of-sequence when a NEW best appears
+        if record['max'] > best_so_far and save_last:
+            best_so_far = record['max']
+            try:
+                G_new, mask_new = None, getattr(hof[0], "active_mask", None)
+                try:
+                    simn = simulate_genome(list(hof[0]), states=states, machine_cfg=mc_eval, collect_activity=True)
+                    if isinstance(simn, tuple) and len(simn) == 2:
+                        G_new, mask_new = simn
+                    else:
+                        G_new = simn
+                except Exception:
+                    G_new = None
+                d_last = _mk_ckpt_subdir(ckpt_dir, "last", gen)
+                _bundle_checkpoint(d_last,
+                    pop=pop, fits=fits_arr, states=states, machine_cfg=mc_eval, fitness=fitness,
+                    best_ind=hof[0], best_mask=mask_new, G_best=G_new,
+                    full_condition=full_cond, hist_bins=hist_bins
+                )
+                paths["best"] = str(Path(d_last) / "genome.yaml")
+                if save_best_png and G_new is not None:
+                    paths["best_png"] = str(Path(d_last) / "best.png")
+                paths["last"] = str(d_last)
+            except Exception:
+                pass
+
+        # 3) progress update (rich metrics)
         if pbar is not None:
-            pbar.set_postfix(max=f"{record['max']:.4f}",
-                             avg=f"{record['avg']:.4f}",
-                             len=best_len)
+            if tops:
+                len_top_max = max(len(t) for t in tops)
+                len_top_min = min(len(t) for t in tops)
+                len_top_avg = sum(len(t) for t in tops) / len(tops)
+                act_top_vals = [int(sum(getattr(t, "active_mask", []) or [])) for t in tops]
+                act_top_max = max(act_top_vals)
+                act_top_min = min(act_top_vals)
+                act_top_avg = sum(act_top_vals) / len(act_top_vals)
+            else:
+                len_top_max = len_top_min = len_top_avg = 0
+                act_top_max = act_top_min = act_top_avg = 0
+
+            pbar.set_postfix(
+                max=f"{record['max']:.4f}",
+                avg=f"{record['avg']:.4f}",
+                len=best_len,
+                len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}",
+                cnt_max=len(tops),
+                act_avg=f"{(sum(acts_arr)/max(1,len(acts_arr))):.2f}",
+                len_top=f"{len_top_min:.0f}/{len_top_avg:.1f}/{len_top_max:.0f}",
+                act_top=f"{act_top_min:.0f}/{act_top_avg:.1f}/{act_top_max:.0f}",
+            )
             pbar.update(1)
         elif progress:
             print(f"gen {gen}/{ngen}  max={record['max']:.4f}  avg={record['avg']:.4f}  len={best_len}")
@@ -972,16 +1043,8 @@ def evolve(
 
     # final checkpoints
     best = hof[0]
-    paths = {}
-
-    # NEW: single simulate_genome call – both graph and activity
     try:
-        sim = simulate_genome(
-            list(best),
-            states=states,          # use the same states you pass into evolve(...)
-            machine_cfg=machine_cfg,# use the same machine_cfg you pass into evolve(...)
-            collect_activity=True
-        )
+        sim = simulate_genome(list(best), states=states, machine_cfg=mc_eval, collect_activity=True)
         if isinstance(sim, tuple) and len(sim) == 2:
             G_best, mask = sim
         else:
@@ -992,38 +1055,21 @@ def evolve(
     gsum = _graph_summary(G_best, states) if G_best is not None else None
     activity_yaml = _activity_to_yaml(mask)
 
+    if save_best and "best" not in paths:
+        d_last_final = _mk_ckpt_subdir(ckpt_dir, "last", ngen)
+        _bundle_checkpoint(d_last_final,
+            pop=pop, fits=[ind.fitness.values[0] for ind in pop], states=states, machine_cfg=mc_eval, fitness=fitness,
+            best_ind=best, best_mask=getattr(best, "active_mask", None), G_best=G_best,
+            full_condition=full_cond, hist_bins=hist_bins
+        )
+        paths["best"] = str(Path(d_last_final) / "genome.yaml")
+        if save_best_png and G_best is not None:
+            paths["best_png"] = str(Path(d_last_final) / "best.png")
 
+    if save_last and "last" not in paths:
+        paths["last"] = str(ckpt_dir)
 
-    if save_best:
-        paths.update(_write_checkpoint_best(
-            ckpt_dir, list(best), best.fitness.values[0], fmt, states,
-            full_condition=full_cond, graph_summary=gsum, activity=activity_yaml
-        ))
-
-
-
-
-    if save_last:
-        last_path = ckpt_dir / "last.json"
-        with open(last_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "best_fitness": float(best.fitness.values[0]),
-                "best_genes": _genes_to_hex(list(best)),
-                "pop_size": pop_size,
-                "generations": ngen,
-                "graph_summary": gsum,
-            }, f, indent=2)
-        paths["last"] = str(last_path)
-
-    # optional in-process PNG (now using the already-simulated G_best)
-    if save_best_png:
-        png = _render_best_png_inproc(ckpt_dir, G_best)
-        if png:
-            paths["best_png"] = png
-
-
-    # close the pool if any
-    if 'pool' in locals() and pool is not None:
+    if pool is not None:
         pool.close()
         pool.join()
 

@@ -266,12 +266,21 @@ class HexMesh(_MeshBase):
 
 @dataclass
 class TriangleLegacyWeights:
-    shell_vertex_weight: float = 0.5       # legacy-UI-aligned default (helps monotonicity)
-    genome_len_bonus: bool = False
-    use_unique_shell_nodes: bool = True    # NEW: penalize by unique boundary vertices
-    tri_eps: float = 1e-3                  # NEW: tiny bias so more triangles always wins
+    # tri mesh specific:
     tri_face_weight: float = 2.601         # was hard-coded as 2.001
-    vertex_penalty_weight: float = 0.75     # was hard-coded as 1.0 (per-node penalty)
+    interior_deg6_weight: float = 2.0        # was hardcoded as 1.9
+
+    # compactness / shapefactor
+    vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
+    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
+    
+
+    genome_len_bonus: bool = False
+    genome_len_bonus_weight: float = 1.0
+
+    use_biconnected_gate: bool = True
+    biconnected_gate_score: float = 1.02
+    biconnected_gate_multiplier: float = 0.001
 
 class TriangleMeshLegacyCS(PlanarBasic):
     """
@@ -310,62 +319,45 @@ class TriangleMeshLegacyCS(PlanarBasic):
         if nV <= 2:
             return 1.0
 
-        emb = self.compute_embedding_info(GG)
-        faces_all = emb.faces
+        
 
-        # cyclomatic number to distinguish tree vs cycle when faces==1
+        emb = self.compute_embedding_info(GG)
+        faces_all = emb.faces  # minimal inner faces + (maybe) one outer shell
+
+        # cyclomatic number (for the early tree check)
         m = GG.number_of_edges()
         try:
-            import networkx as nx
             c = nx.number_connected_components(GG)
         except Exception:
             c = 1
         mu = m - nV + c
 
         # Only trees with one face get the 1.01 early return
+        # (With the new embedding, faces_all will be [] for forests; keep this gate as-is.)
         if len(faces_all) == 1 and mu == 0:
             return 1.01
-
-        # # biconnected gate (offshoots down-weighted)
-        # try:
-        #     import networkx as nx
-        #     if not nx.is_biconnected(GG):
-        #         return 1.02
-        # except Exception:
-        #     pass
-
+    
         # degree cap
         degs = [d for _, d in GG.degree()]
         if degs and max(degs) > 6:
             return 1.03
 
-        
-        # --- triangle count (faces + chord-triangles inside non-tri faces) ---
-        # 1) count explicit triangular faces
+
+        c_G = nx.number_connected_components(G)
+        if c_G > 1:
+            return 1.04
+
+        # --- triangle count: count *facial* triangles only ---
+        # Faces are already minimalized, so just count length-3 faces.
         tri_faces: set[frozenset] = {
             frozenset(f) for f in faces_all if len(f) == 3
         }
 
-        # 2) recover triangles that a non-tri face would split along an existing chord
-        #    sliding triples (a,b,c) along the face boundary; if (a,c) is an edge, {a,b,c} is a triangle in G
-        for face in faces_all:
-            L = len(face)
-            if L >= 4:
-                for i in range(L):
-                    a = face[i]
-                    b = face[(i + 1) % L]
-                    c = face[(i + 2) % L]
-                    if GG.has_edge(a, c):
-                        tri_faces.add(frozenset((a, b, c)))
-
         # Legacy quirk: discount a triangular outer shell if present
-        if len(emb.shell) == 3:
+        if emb.shell and len(emb.shell) == 3:
             tri_faces.discard(frozenset(emb.shell))
 
-        tri_count = max(0, len(tri_faces))
-
-
-                      
+        tri_count = len(tri_faces)
 
         # interior degree==6 count
         interior = emb.interior_nodes
@@ -375,35 +367,44 @@ class TriangleMeshLegacyCS(PlanarBasic):
         shell_count = len(emb.shell_nodes)
         if shell_count < 0 or shell_count > nV:
             shell_count = min(max(shell_count, 0), nV)
-               
+
         # weights (configurable; defaults keep old behavior)
-        tri_w   = float(self.w.tri_face_weight)
-        shell_w = float(self.w.shell_vertex_weight)
-        node_w  = float(self.w.vertex_penalty_weight)
+        tri_w     = float(self.w.tri_face_weight)
+        shell_w   = float(self.w.shell_vertex_weight)
+        node_w    = float(self.w.vertex_weight)
+        in_deg6_w = float(self.w.interior_deg6_weight)
 
         score = (
             tri_w * tri_count
-            + float(interior_deg6)
-            - shell_w * float(shell_count)
-            - node_w * float(nV)
+            + in_deg6_w * float(interior_deg6)
+            + shell_w * float(shell_count)
+            + node_w * float(nV)
             + 20.0
         )
-
+      
 
         if self.w.genome_len_bonus:
             gl = _infer_genome_len(meta)
             if gl and gl > 0:
-                score += 1.0 / gl
+                score += float(self.w.genome_len_bonus_weight) / gl
 
+        use_biconn_gate = bool(self.w.use_biconnected_gate)
+        biconn_gate_score = float(self.w.biconnected_gate_score)
+        biconnected_gate_multiplier = float(self.w.biconnected_gate_multiplier)
+        if use_biconn_gate:
+            try:
+                if not nx.is_biconnected(GG):
+                    score = biconn_gate_score + score * biconnected_gate_multiplier
+            except Exception:
+                # If the check fails for any reason, just skip the gate.
+                pass
 
         if verbose:
             print("\n---")
             print("faces_all:", faces_all)
             print("tri_count:", tri_count)
             print("interior:", sorted(interior), "interior_deg6:", interior_deg6)
-            print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)            
+            print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)
             print("score:", float(score))
 
         return float(score)
-
-

@@ -25,9 +25,11 @@ runs/
 docs/xx_legacy/*.json
 # Run artifacts, previews, debug outputs
 /artifacts/
+/_artifacts/
 
 # Avoid stray PNGs in repo root
 /*.png
 
 logbook/
+_logbook/
 code2prompt/

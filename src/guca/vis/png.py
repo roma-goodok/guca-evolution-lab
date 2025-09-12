@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import math
 import time
-import colorsys
+
 import zlib
 from pathlib import Path
 from typing import Any, Iterable, Tuple
+# --- force headless backend for PNG rendering ---
+import os as _os
+_os.environ.setdefault("MPLBACKEND", "Agg")  # non-interactive backend
+
+import matplotlib.pyplot as plt
+import networkx as nx
+import colorsys
 
 __all__ = ["save_png"]
 
@@ -241,8 +248,7 @@ def save_png(
 
     Returns plotting time in seconds.
     """
-    import matplotlib.pyplot as plt
-    import networkx as nx
+
 
     t0 = time.perf_counter()
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -251,10 +257,31 @@ def save_png(
     G = nx.Graph()
     orig_by_id: dict[Any, Any] = {}
 
+    # Detect if the input is a networkx.Graph so we can read node attributes
+    is_nx = False
+    try:
+        import networkx as _nx_mod
+        is_nx = isinstance(graph, _nx_mod.Graph)
+    except Exception:
+        pass
+
     for n in _collect_nodes(graph):
         nid = _nx_id(n)
-        orig_by_id[nid] = n
+        if is_nx:
+            # Build a tiny proxy so downstream color/label logic sees .state
+            attrs = graph.nodes.get(nid, {}) if hasattr(graph, "nodes") else {}
+            st = attrs.get("state", None)
+            if st is None and "state_id" in attrs:
+                st = attrs["state_id"]  # use numeric id if label is unknown
+            class _Proxy: pass
+            p = _Proxy()
+            p.id = nid
+            p.state = st  # may be str like "A" or int like 0
+            orig_by_id[nid] = p
+        else:
+            orig_by_id[nid] = n
         G.add_node(nid)
+
 
     for e in _collect_edges(graph):
         if isinstance(e, (tuple, list)) and len(e) >= 2:
