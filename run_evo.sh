@@ -60,15 +60,30 @@ export ML_LOGBOOK_DIR="_logbook"
 #   ga.generations=10000 ga.pop_size=200 \
 #   ga.checkpoint.save_every=1000
 
-python -m guca.cli.run_ga_hydra --config-name=exp003.05 \
-  experiment.name="exp003.05.01_shellpenalty_gen05K" \
-  ga.generations=500 ga.pop_size=200 \
-  ga.checkpoint.save_every=100
+# python -m guca.cli.run_ga_hydra --config-name=exp003.05 \
+#   experiment.name="exp003.05.01_shellpenalty_gen05K" \
+#   ga.generations=500 ga.pop_size=200 \
+#   ga.checkpoint.save_every=100
+
+# python -m guca.cli.run_ga_hydra --config-name=exp003.05 \
+#   experiment.name="exp003.05.02_shellpenalty_gen10K" \
+#   ga.generations=10000 ga.pop_size=200 \
+#   ga.checkpoint.save_every=1000
 
 python -m guca.cli.run_ga_hydra --config-name=exp003.05 \
-  experiment.name="exp003.05.02_shellpenalty_gen10K" \
-  ga.generations=10000 ga.pop_size=200 \
-  ga.checkpoint.save_every=1000
+  experiment.name="exp003.05.03_shellpenalty_gen100K" \
+  ga.generations=100000 ga.pop_size=200 \
+  ga.checkpoint.save_every=5000
+
+#   python -m guca.cli.run_ga_hydra --config-name=exp003.07 \
+#   experiment.name="exp003.07.01_less_mut_gen05K" \
+#   ga.generations=500 ga.pop_size=200 \
+#   ga.checkpoint.save_every=100
+
+# python -m guca.cli.run_ga_hydra --config-name=exp003.07 \
+#   experiment.name="exp003.07.02_less_mut_gen10K" \
+#   ga.generations=10000 ga.pop_size=200 \
+#   ga.checkpoint.save_every=100
 
 
 
