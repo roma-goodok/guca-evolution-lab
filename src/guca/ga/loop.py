@@ -32,11 +32,13 @@ def _init_worker(fitness, states, machine_cfg):
 
 def _eval_only(genes: List[int]) -> float:
     G = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG)
-    return float(_WFIT.score(G))
+    meta = {"genome_len": len(genes), "max_steps": _WMCFG.get("max_steps")}
+    return float(_WFIT.score(G, meta=meta))
 
 def _eval_with_mask(genes: List[int]) -> Tuple[float, List[bool]]:
     G, mask = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG, collect_activity=True)
-    return float(_WFIT.score(G)), list(mask or [])
+    meta = {"genome_len": len(genes), "max_steps": _WMCFG.get("max_steps")}
+    return float(_WFIT.score(G, meta=meta)), list(mask or [])
 
 def evolve(
     *,
@@ -102,12 +104,13 @@ def evolve(
 
     sel_cfg = ga_cfg.get("selection", {}) or {}
     selector_fn = _make_selector(str(sel_cfg.get("method", "rank")), tournament_k=int(ga_cfg.get("tournament_k", 3)), random_ratio=float(sel_cfg.get("random_ratio", 0.0)), rng=r)
-    toolbox.register("select", selector_fn)
+    toolbox.register("select", selector_fn)    
 
     def evaluate(individual: List[int]) -> Tuple[float]:
         G, active_mask = simulate_genome(individual, states=states, machine_cfg=mc_eval, collect_activity=True)
         setattr(individual, "active_mask", list(active_mask))
-        return (float(fitness.score(G)),)
+        meta = {"genome_len": len(individual), "max_steps": mc_eval.get("max_steps")}
+        return (float(fitness.score(G, meta=meta)),)
     toolbox.register("evaluate", evaluate)
 
     pop_size = int(ga_cfg.get("pop_size", 40))
