@@ -272,7 +272,8 @@ class TriangleLegacyWeights:
 
     # compactness / shapefactor
     vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)    
+    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)
+    isoperimetric_quotient_weight: float = 0   
     
 
     genome_len_bonus: bool = False
@@ -373,18 +374,25 @@ class TriangleMeshLegacyCS(PlanarBasic):
         shell_w   = float(self.w.shell_vertex_weight)
         node_w    = float(self.w.vertex_weight)
         in_deg6_w = float(self.w.interior_deg6_weight)
+        iq_w = float(self.w.isoperimetric_quotient_weight)
+
+        iq = float(tri_count+interior_deg6) / (shell_count+1)**2
 
         score = (
             tri_w * tri_count
             + in_deg6_w * float(interior_deg6)
             + shell_w * float(shell_count)
             + node_w * float(nV)
+            + iq_w*iq
             + 20.0
         )
-      
+
 
         if self.w.genome_len_bonus:
             gl = _infer_genome_len(meta)
+            if verbose:
+                print("meta", meta)
+                print("gl:", gl, "score:", score)
             if gl and gl > 0:
                 score += float(self.w.genome_len_bonus_weight) / gl
 
