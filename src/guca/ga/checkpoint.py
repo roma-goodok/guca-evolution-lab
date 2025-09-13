@@ -6,7 +6,7 @@ from pathlib import Path
 import json
 import csv
 import networkx as nx
-from guca.ga.encoding import decode_gene
+from guca.ga.encoding import decode_gene, sanitize_gene
 
 def _activity_scheme(mask: Sequence[bool]) -> str:
     if not mask: return ""
@@ -34,30 +34,49 @@ def _graph_summary(G: nx.Graph, states: List[str]) -> Dict[str, Any]:
         summary["edge_list"] = edge_list
     return summary
 
-def _genes_to_yaml_rules(genes: List[int], states: List[str], *, full_condition: bool = False) -> List[Dict[str, Any]]:
+def _genes_to_yaml_rules(
+    genes: List[int],
+    states: List[str],
+    *,
+    full_condition: bool = False,
+    machine_encoding: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     n_states = max(1, len(states))
+    enc = dict(machine_encoding or {})
+
     for g in genes:
-        r = decode_gene(g, state_count=n_states)
+        g_for_decode = g
+        if enc.get("sanitize_on_decode", False):
+            g_for_decode = sanitize_gene(
+                g,
+                state_count=n_states,
+                enforce_semantics=bool(enc.get("enforce_semantics", False)),
+                canonicalize_flags=bool(enc.get("canonicalize_flags", False)),
+                enforce_bounds_order=bool(enc.get("enforce_bounds_order", False)),
+            )
+        r = decode_gene(g_for_decode, state_count=n_states)
+
         cur = states[int(r.cond_current) % n_states]
-        op_name = r.op_kind.name
-        operand = None if getattr(r, "operand", None) is None else states[int(r.operand) % n_states]
-        row: Dict[str, Any] = {"condition": {"current": cur}, "op": {"kind": op_name}}
+        operand = None if r.operand is None else states[int(r.operand) % n_states]
+
+        row: Dict[str, Any] = {"condition": {"current": cur}, "op": {"kind": r.op_kind.name}}
         if operand is not None:
             row["op"]["operand"] = operand
+
         if full_condition:
-            prior = getattr(r, "prior", None)
-            if prior is not None:
-                prior = states[int(prior) % n_states]
-            row["condition_meta"] = {
+            prior = "any" if r.prior is None else states[int(r.prior) % n_states]
+            def nz(v): return -1 if v is None else int(v)
+            row["condition"].update({
                 "prior": prior,
-                "conn_ge": getattr(r, "conn_ge", None),
-                "conn_le": getattr(r, "conn_le", None),
-                "parents_ge": getattr(r, "parents_ge", None),
-                "parents_le": getattr(r, "parents_le", None),
-            }
+                "conn_ge": nz(r.conn_ge),
+                "conn_le": nz(r.conn_le),
+                "parents_ge": nz(r.parents_ge),
+                "parents_le": nz(r.parents_le),
+            })
         out.append(row)
     return out
+
 
 def _mk_ckpt_subdir(root: Path, tag: str, gen: int) -> Path:
     d = root / f"{tag}_{gen:05d}"; d.mkdir(parents=True, exist_ok=True); return d
@@ -66,7 +85,7 @@ def _machine_yaml_from_cfg(machine_cfg: Dict[str, Any]) -> Dict[str, Any]:
     nearest = machine_cfg.get("nearest_search", {}) or {}
     return {
         "start_state": str(machine_cfg.get("start_state", "A")),
-        "transcription": "resettable",
+        "transcription": str(machine_cfg.get("transcription", "resettable")),
         "count_compare": "range",
         "max_vertices": int(machine_cfg.get("max_vertices", 2000)),
         "max_steps": int(machine_cfg.get("max_steps", 120)),
@@ -76,6 +95,7 @@ def _machine_yaml_from_cfg(machine_cfg: Dict[str, Any]) -> Dict[str, Any]:
             "connect_all": bool(nearest.get("connect_all", False)),
         },
     }
+
 
 def _write_population_json(dir_: Path, pop, fits):
     out = []
@@ -134,12 +154,19 @@ def _write_genome_yaml(dir_: Path, best_genes: List[int], states: List[str], mac
     y = {
         "machine": _machine_yaml_from_cfg(machine_cfg),
         "init_graph": {"nodes": [{"state": str(machine_cfg.get("start_state", "A"))}]},
-        "rules": _genes_to_yaml_rules(best_genes, states, full_condition=full_condition),
+        "rules": _genes_to_yaml_rules(
+            best_genes, states,
+            full_condition=full_condition,
+            machine_encoding=machine_cfg.get("encoding", {})
+        ),
     }
     if graph_summary or activity_mask is not None:
         y["meta"] = {}
-        if graph_summary: y["meta"]["graph_summary"] = graph_summary
-        if activity_mask is not None: y["meta"]["activity_mask"] = [bool(x) for x in activity_mask]
+        if graph_summary:
+            y["meta"]["graph_summary"] = graph_summary
+        if activity_mask is not None:            
+            y["meta"]["activity_scheme"] = _activity_scheme(activity_mask)
+
     p = dir_ / "genome.yaml"
     if yaml is None:
         with open(p, "w", encoding="utf-8") as fh: fh.write(json.dumps(y, indent=2))
@@ -169,6 +196,17 @@ def _bundle_checkpoint(dir_: Path, *, pop, fits, states, machine_cfg, fitness, b
     pop_act_av = sum(actlens) / max(1, len(actlens))
     best_len = len(best_ind)
     avg_len = sum(lengths) / max(1, len(lengths))
+
+    # In _bundle_checkpoint, just before building 'stats', compute extra metrics:
+    fit_metrics: Dict[str, Any] = {}
+    best_scheme = _activity_scheme(getattr(best_ind, "active_mask", []) or [])
+    try:
+        sval, fit_metrics = fitness.score(G_best, return_metrics=True)  # sval unused
+        if not isinstance(fit_metrics, dict):
+            fit_metrics = {}
+    except Exception:
+        fit_metrics = {}
+
     stats = {
         "best_fitness": float(mx),
         "avg_fitness": float(avg_fit),
@@ -179,6 +217,14 @@ def _bundle_checkpoint(dir_: Path, *, pop, fits, states, machine_cfg, fitness, b
         "best_length": int(best_len),
         "avg_length_pop": float(avg_len),
     }
+
+    stats.update({"best_activity_scheme": best_scheme})
+    # merge extra per-individual metrics into stats (namespaced or flat; keep flat & short)
+    for k, v in fit_metrics.items():
+        # only simple scalars for CSV
+        if isinstance(v, (int, float, str, bool)):
+            stats[k] = v
+
     _write_metrics_csv(dir_, stats)
     return {"genome": genome_path, "metrics": stats}
 

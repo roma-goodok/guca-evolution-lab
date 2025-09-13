@@ -1,6 +1,7 @@
 # src/guca/ga/loop.py
 from __future__ import annotations
-import json, random
+import json, random, csv
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter
@@ -35,10 +36,16 @@ def _eval_only(genes: List[int]) -> float:
     meta = {"genome_len": len(genes), "max_steps": _WMCFG.get("max_steps")}
     return float(_WFIT.score(G, meta=meta))
 
-def _eval_with_mask(genes: List[int]) -> Tuple[float, List[bool]]:
+def _eval_with_mask(genes: List[int]) -> Tuple[float, List[bool], Dict[str, Any]]:
+    """Evaluation helper for pools: returns (fitness, activity_mask, metrics_dict)."""
     G, mask = simulate_genome(genes, states=_WSTATES, machine_cfg=_WMCFG, collect_activity=True)
     meta = {"genome_len": len(genes), "max_steps": _WMCFG.get("max_steps")}
-    return float(_WFIT.score(G, meta=meta)), list(mask or [])
+    # Prefer rich return (score, metrics); fallback to plain score
+    try:
+        s, metrics = _WFIT.score(G, meta=meta, return_metrics=True)  # type: ignore[call-arg]
+    except TypeError:
+        s, metrics = float(_WFIT.score(G, meta=meta)), {}
+    return float(s), list(mask or []), dict(metrics or {})
 
 def evolve(
     *,
@@ -103,14 +110,24 @@ def evolve(
     toolbox.register("mutate", mutate)
 
     sel_cfg = ga_cfg.get("selection", {}) or {}
-    selector_fn = _make_selector(str(sel_cfg.get("method", "rank")), tournament_k=int(ga_cfg.get("tournament_k", 3)), random_ratio=float(sel_cfg.get("random_ratio", 0.0)), rng=r)
-    toolbox.register("select", selector_fn)    
+    selector_fn = _make_selector(
+        str(sel_cfg.get("method", "rank")),
+        tournament_k=int(ga_cfg.get("tournament_k", 3)),
+        random_ratio=float(sel_cfg.get("random_ratio", 0.0)),
+        rng=r
+    )
+    toolbox.register("select", selector_fn)
 
     def evaluate(individual: List[int]) -> Tuple[float]:
         G, active_mask = simulate_genome(individual, states=states, machine_cfg=mc_eval, collect_activity=True)
         setattr(individual, "active_mask", list(active_mask))
         meta = {"genome_len": len(individual), "max_steps": mc_eval.get("max_steps")}
-        return (float(fitness.score(G, meta=meta)),)
+        try:
+            s, metrics = fitness.score(G, meta=meta, return_metrics=True)  # type: ignore[call-arg]
+        except TypeError:
+            s, metrics = float(fitness.score(G, meta=meta)), {}
+        setattr(individual, "metrics", metrics)
+        return (float(s),)
     toolbox.register("evaluate", evaluate)
 
     pop_size = int(ga_cfg.get("pop_size", 40))
@@ -137,11 +154,12 @@ def evolve(
     else:
         map_fn = map
 
-    # evaluate init
+    # evaluate init (fitness, mask, metrics)
     res = list(map_fn(_eval_with_mask, pop))
-    for ind, (fit, mask) in zip(pop, res):
+    for ind, (fit, mask, metrics) in zip(pop, res):
         ind.fitness.values = (fit,)
         setattr(ind, "active_mask", mask)
+        setattr(ind, "metrics", metrics)
 
     stats = tools.Statistics(lambda ind: ind.fitness.values[0])
     stats.register("avg", lambda xs: sum(xs) / max(1, len(xs)))
@@ -150,6 +168,7 @@ def evolve(
 
     ckpt = checkpoint_cfg or {}
     ckpt_dir = (run_dir / ckpt.get("out_dir", "checkpoints"))
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     fmt = str(ckpt.get("fmt", "json")).lower()
     save_best = bool(ckpt.get("save_best", True))
     save_last = bool(ckpt.get("save_last", True))
@@ -162,6 +181,52 @@ def evolve(
     hof.update(pop)
     best0 = hof[0]
     fits0 = [ind.fitness.values[0] for ind in pop]
+
+    # Helper: append a row into a single progress.csv for the whole run
+    progress_csv = ckpt_dir / "progress.csv"
+    def _append_progress(gen_idx: int, pop_list: List[Any]) -> None:
+        progress_csv.parent.mkdir(parents=True, exist_ok=True)
+        fits_arr = [float(ind.fitness.values[0]) for ind in pop_list]
+        lens_arr = [len(ind) for ind in pop_list]
+        acts_arr = [int(sum(getattr(ind, "active_mask", []) or [])) for ind in pop_list]
+        best = hof[0]
+        best_scheme = _activity_scheme(getattr(best, "active_mask", []) or [])
+
+        tops = [ind for ind in pop_list if abs(ind.fitness.values[0] - max(fits_arr)) < 1e-12]
+        if tops:
+            len_top_max = max(len(t) for t in tops); len_top_min = min(len(t) for t in tops); len_top_avg = sum(len(t) for t in tops)/len(tops)
+            act_top_vals = [int(sum(getattr(t, "active_mask", []) or [])) for t in tops]
+            act_top_max = max(act_top_vals); act_top_min = min(act_top_vals); act_top_avg = sum(act_top_vals)/len(act_top_vals)
+        else:
+            len_top_max = len_top_min = len_top_avg = act_top_max = act_top_min = act_top_avg = 0
+
+        metrics_json = "{}"
+        if hasattr(best, "metrics") and isinstance(best.metrics, dict):
+            try:
+                metrics_json = json.dumps(best.metrics, ensure_ascii=False)
+            except Exception:
+                metrics_json = "{}"
+
+        row = {
+            "datetime": datetime.now().isoformat(timespec="seconds"),
+            "gen": gen_idx,
+            "best_fitness": max(fits_arr) if fits_arr else 0.0,
+            "avg_fitness": (sum(fits_arr)/max(1,len(fits_arr))) if fits_arr else 0.0,
+            "cnt_max": len(tops),
+            "best_length": len(best) if len(hof) else 0,
+            "len_avg": (sum(lens_arr)/max(1,len(lens_arr))) if lens_arr else 0.0,
+            "act_avg": (sum(acts_arr)/max(1,len(acts_arr))) if acts_arr else 0.0,
+            "len_top_min": len_top_min, "len_top_avg": len_top_avg, "len_top_max": len_top_max,
+            "act_top_min": act_top_min, "act_top_avg": act_top_avg, "act_top_max": act_top_max,
+            "best_activity_scheme": best_scheme,
+            "best_metrics_json": metrics_json,
+        }
+        write_header = not progress_csv.exists()
+        with open(progress_csv, "a", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(row.keys()))
+            if write_header:
+                w.writeheader()
+            w.writerow(row)
 
     # initial last_00000
     last_dir_path = None
@@ -189,6 +254,9 @@ def evolve(
     record0 = stats.compile(pop)
     best_len0 = len(hof[0]) if len(hof) else 0
     best_so_far = record0["max"]
+
+    # append gen-0 progress row
+    _append_progress(0, pop)
 
     pbar = None
     if progress and tqdm is not None:
@@ -243,9 +311,10 @@ def evolve(
         invalid = [ind for ind in pop if not ind.fitness.valid]
         if invalid:
             res_inv = list(map_fn(_eval_with_mask, invalid))
-            for ind, (fit, mask) in zip(invalid, res_inv):
+            for ind, (fit, mask, metrics) in zip(invalid, res_inv):
                 ind.fitness.values = (fit,)
                 setattr(ind, "active_mask", mask)
+                setattr(ind, "metrics", metrics)
 
         hof.update(pop)
         record = stats.compile(pop)
@@ -299,6 +368,9 @@ def evolve(
             pbar.update(1)
         elif progress:
             print(f"gen {gen}/{ngen}  max={record['max']:.4f}  avg={record['avg']:.4f}  len={len(hof[0]) if len(hof) else 0}")
+
+        # append row to progress.csv for this generation
+        _append_progress(gen, pop)
 
     if pbar is not None:
         pbar.close()
