@@ -25,11 +25,34 @@
 
 
 python -m guca.cli.run_gum \
-  --genome _logbook/trimesh/baseline/exp003.04.02_continuable_gen10K/ga_experiment_20250911_204732/checkpoints/last_00664/genome.yaml \
+  --genome _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/genome.yaml \
+  --run-dir _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/rerun_gum \
   --save-png \
-  --vis-node-render dots
+  --vis-node-render ids
+
+
+# visualize directly from a checkpoint genome.yaml
+python -m guca.cli.draw_edge_list --yaml _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/genome.yaml \
+  --run-dir _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/graph_vis \
+  --vis-node-render ids
+
+
+python -m guca.cli.draw_edge_list --yaml examples/graphs/shell4_triangles.yaml \
+  --run-dir examples/graphs/graph_vis \
+  --vis-node-render ids
+
+python -m guca.cli.draw_edge_list --yaml examples/graphs/strip_cross_in_rects.yaml \
+  --run-dir examples/graphs/graph_vis \
+  --vis-node-render ids
 
   
+
+  
+
+
+
+
+
 
 # python -m guca.cli.run_gum \
 #   --genome examples/genomes/primitive_fractal_genom.yaml \

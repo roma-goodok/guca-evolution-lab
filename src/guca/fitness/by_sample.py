@@ -76,10 +76,12 @@ class BySample(PlanarBasic):
     def from_graph(cls, reference_graph: nx.Graph, *, weights: Optional[BySampleWeights] = None, **kwargs) -> "BySample":
         return cls(reference_graph=reference_graph, weights=weights, **kwargs)
 
-    def score(self, G: nx.Graph, meta: Optional[Dict] = None) -> float:
-        vr: ViabilityResult = self.viability_filter(G, meta)
+    
+    
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *, return_metrics: bool = False, **_) -> float | Tuple[float, Dict[str, float]]:
+        vr: ViabilityResult = self.viability_filter(G, meta)        
         if not vr.viable:
-            return vr.base_score
+            return (vr.base_score, {}) if return_metrics else vr.base_score
 
         GG = self.prepare_graph(G)
         emb: EmbeddingInfo = self.compute_embedding_info(GG)
@@ -127,6 +129,18 @@ class BySample(PlanarBasic):
             + self.weights.w_size    * size_bonus
             + gl_bonus
         )
+        if return_metrics:
+            metrics = {
+                "face_similarity": float(face_sim),
+                "degree_similarity": float(degree_sim),
+                "shell_penalty": float(shell_pen),
+                "internal_edge_ratio": float(internal_edge_ratio),
+                "size_bonus": float(size_bonus),
+                "nodes": GG.number_of_nodes(),
+                "edges": GG.number_of_edges(),
+                "shell_len": len(emb.shell),
+            }
+            return float(score), metrics
         return float(score)
 
 

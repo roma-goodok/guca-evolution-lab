@@ -14,6 +14,14 @@ import yaml
 from guca.core.graph import GUMGraph, stats_summary
 from guca.core.machine import GraphUnfoldingMachine
 from guca.core.rules import change_table_from_yaml, TranscriptionWay, CountCompare
+from guca.ga.checkpoint import _activity_scheme
+import copy
+
+import networkx as nx
+from guca.fitness.meshes import TriangleMeshLegacyCS
+from guca.fitness.planar_basic import PlanarBasic
+
+
 
 from guca.vis.png import save_png
 
@@ -219,14 +227,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--assert", dest="do_assert", action="store_true")
     ap.add_argument("--save-png", action="store_true", help="Save final PNG of the result (placeholder).")
-    ap.add_argument("--run-dir", default="runs", help="Base output directory (default: runs).")
-    ap.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
+    ap.add_argument("--run-dir", default="examples/runs", help="Base output directory (default: examples/runs).")
+    ap.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")    
     ap.add_argument(
         "--vis-node-render",
-        choices=["full", "dots", "none"],
+        choices=["full", "dots", "none", "ids"],
         default="full",
-        help="PNG node rendering style: 'full' (default), 'dots' (tiny markers, no labels), or 'none' (edges only).",
+        help="PNG node rendering: 'full' (A/B/C labels), 'ids' (node numbers), 'dots', or 'none'.",
     )
+
     ap.add_argument(
         "--vis-dot-size",
         type=int,
@@ -299,6 +308,57 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 
     summary = stats_summary(graph)
+
+    # build a stable, sorted edge_list like in checkpoints
+    edge_list = sorted(
+        [[int(min(u, v)), int(max(u, v))] for (u, v) in graph.edges()],
+        key=lambda uv: (uv[0], uv[1])
+    )
+
+    # activity mask → short scheme
+    mask = [bool(getattr(r, "was_active", False)) for r in m.change_table]
+    activity_scheme = _activity_scheme(mask)
+
+    # Build a NetworkX view for metrics/face enumeration
+    NG = nx.Graph()
+    for n in graph.nodes():
+        NG.add_node(n.id)
+    for u, v in graph.edges():
+        NG.add_edge(int(u), int(v))
+
+    # Triangle-legacy metrics + faces/shell
+    tm = TriangleMeshLegacyCS()
+    tl_score, tl_metrics = tm.score(NG, return_metrics=True)
+
+    pb = PlanarBasic()
+    emb = pb.compute_embedding_info(NG)
+    faces_all = [list(f) for f in emb.faces]   # include shell within faces (per PlanarBasic)
+    shell_seq = list(emb.shell)
+
+    
+
+
+
+    # enrich original YAML and write alongside outputs
+    enriched = copy.deepcopy(cfg) if isinstance(cfg, dict) else {"machine": {}, "rules": []}
+    meta = dict(enriched.get("meta") or {})
+    gsum = dict(summary)
+    gsum["edge_list"] = edge_list
+    meta["graph_summary"] = gsum
+    meta["activity_scheme"] = activity_scheme
+    meta["triangle_legacy_score"] = float(tl_score)
+    meta["triangle_legacy_metrics"] = {k: (int(v) if isinstance(v, bool) or isinstance(v, int) else v)
+                                    for k, v in tl_metrics.items()}
+    meta["faces_all"] = faces_all
+    meta["shell"] = shell_seq
+    enriched["meta"] = meta
+
+    genome_out = out_genome_dir / "genome_enriched.yaml"
+    with open(genome_out, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(enriched, fh, sort_keys=False, allow_unicode=True)
+
+    logging.info("Enriched YAML: %s", genome_out.as_posix())
+
 
     # Save PNG if requested (placeholder includes summary text)
     t_plot = 0.0

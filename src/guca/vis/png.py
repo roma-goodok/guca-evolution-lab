@@ -229,10 +229,10 @@ def save_png(
     dpi: int = 150,
     node_size: int | None = None,      # auto if None
     font_size: int | None = None,      # auto if None
-    label_nodes_max: int | None = None,# auto if None
-    # NEW: node rendering mode
-    node_render: str = "full",         # "full" | "dots" | "none"
+    label_nodes_max: int | None = None,# auto if None    
+    node_render: str = "full",         # "full" | "ids" | "dots" | "none"
     dots_node_size: int | None = None, # override dot size in "dots" mode (points^2)
+    text_color_override: str | None = None,
 ) -> float:
     """
     Render the graph to a PNG with:
@@ -315,7 +315,6 @@ def save_png(
         label_nodes_max = label_max_auto
     edge_width = ew_auto
 
-    # "dots"/"none" never draw labels
     node_render = (node_render or "full").lower()
     if node_render in ("dots", "none"):
         label_nodes_max = 0
@@ -335,11 +334,21 @@ def save_png(
     node_fill: dict[Any, str] = {}
     text_color: dict[Any, str] = {}
     labels: dict[Any, str] = {}
+    
+    # prepare labels and default text colors from palette
     for nid in nodes_order:
         fill, txt = _tone_for_index(indices[nid])
         node_fill[nid] = fill
         text_color[nid] = txt
         labels[nid] = _state_label(orig_by_id[nid])
+
+    if node_render == "ids":
+        for nid in nodes_order:
+            labels[nid] = str(nid)
+        if text_color_override:
+            for nid in nodes_order:
+                text_color[nid] = text_color_override
+    
 
     # per-edge colors = mix of endpoints
     edge_colors = []
@@ -384,21 +393,16 @@ def save_png(
             )
         # node_render == "none": skip node drawing entirely
 
-        # centered labels (only if graph is not too large and we drew "full")
-        if node_render == "full" and n_nodes <= label_nodes_max:
+        if node_render in ("full", "ids") and n_nodes <= label_nodes_max:
             for nid, (x, y) in pos.items():
                 ax.text(
-                    x,
-                    y,
-                    labels[nid],
-                    fontsize=font_size,
-                    fontweight="bold",
-                    color=text_color[nid],
-                    ha="center",
-                    va="center",
+                    x, y, labels[nid],
+                    fontsize=font_size, fontweight="bold",
+                    color=text_color[nid], ha="center", va="center",
                 )
-    else:
-        ax.text(0.05, 0.95, "empty graph", va="top", color="#ffffff", transform=ax.transAxes)
+
+        else:
+            ax.text(0.05, 0.95, "empty graph", va="top", color="#ffffff", transform=ax.transAxes)
 
     fig.savefig(out_path, bbox_inches="tight", pad_inches=0.05)
     plt.close(fig)

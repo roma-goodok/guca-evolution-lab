@@ -1385,6 +1385,69 @@ def checkpoint4():
     return G(tuple_list)
 
 
+@case("-->> checkpoint5")
+def checkpoint5():
+    # _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/genome.yaml
+    
+    # Hardcoded YAML text
+    yaml_text = """
+    edge_list:
+    - - 0
+      - 1
+    - - 0
+      - 2
+    - - 0
+      - 3
+    - - 0
+      - 4
+    - - 0
+      - 6
+    - - 0
+      - 8
+    - - 1
+      - 2
+    - - 1
+      - 4
+    - - 1
+      - 5
+    - - 1
+      - 7
+    - - 2
+      - 3
+    - - 2
+      - 4
+    - - 2
+      - 6
+    - - 3
+      - 6
+    - - 3
+      - 8
+    - - 4
+      - 5
+    - - 4
+      - 7
+    - - 4
+      - 9
+    - - 5
+      - 7
+    - - 5
+      - 9
+    - - 6
+      - 8
+    - - 7
+      - 9
+    """
+    # Load the YAML data
+    data = yaml.safe_load(yaml_text)
+
+    # Convert edge_list to list of tuples
+    edge_list = data['edge_list']
+    print(edge_list)
+    tuple_list = [tuple(edge) for edge in edge_list]
+    
+    return G(tuple_list)
+
+
 def assert_order(results, *names_desc):
     lookup = {n: s for n, s, _ in results}
     for a, b in zip(names_desc, names_desc[1:]):

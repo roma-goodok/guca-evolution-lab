@@ -127,8 +127,8 @@ class _MeshBase(PlanarBasic):
         else:
             # Unknown type → fall back safely
             self.weights = MeshWeights()
-
-    def score(self, G: nx.Graph, meta: Optional[Dict] = None) -> float:
+    
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *, return_metrics: bool = False, **_) -> float | Tuple[float, Dict[str, float]]:
         """Compute the mesh fitness score for graph G."""
         vr: ViabilityResult = self.viability_filter(G, meta)
         if not vr.viable:
@@ -201,8 +201,21 @@ class _MeshBase(PlanarBasic):
             + gl_bonus
         )
         
-        final = _connectivity_cycle_gates(G, score, self.weights)  # use ORIGINAL G here
-        return float(final)
+        metrics = {
+            "nodes": GG.number_of_nodes(),
+            "edges": GG.number_of_edges(),
+            "shell_len": len(emb.shell),
+            "faces_total": len(emb.faces),
+            "faces_interior": f_int_total,
+            "target_face_count": f_int_target,
+            "deg_reward": float(deg_reward),
+            "internal_edge_ratio": float(internal_edge_ratio),
+            "size_bonus": float(size_bonus),
+        }
+        final = _connectivity_cycle_gates(G, score, self.weights)
+        return (float(final), metrics) if return_metrics else float(final)
+
+        
 
 
 def _edge_set(G: nx.Graph) -> set[Tuple[Hash, Hash]]:
@@ -267,12 +280,12 @@ class HexMesh(_MeshBase):
 @dataclass
 class TriangleLegacyWeights:
     # tri mesh specific:
-    tri_face_weight: float = 2.601         # was hard-coded as 2.001
-    interior_deg6_weight: float = 2.0        # was hardcoded as 1.9
+    tri_face_weight: float = 2    # was hard-coded as 2.001
+    interior_deg6_weight: float = 6       # was hardcoded as 1.9
 
     # compactness / shapefactor
-    vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)
+    vertex_weight: float = -1           # was hard-coded as 1.0 (per-node penalty)
+    shell_vertex_weight: float = -1      # penalty, legacy-UI-aligned default (helps monotonicity)
     isoperimetric_quotient_weight: float = 0   
     
 
@@ -310,22 +323,41 @@ class TriangleMeshLegacyCS(PlanarBasic):
         super().__init__(**kwargs)
         self.w = weights or TriangleLegacyWeights()
 
-    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *, verbose: bool = False) -> float:
+      
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *, verbose: bool = False,
+        return_metrics: bool = False, **_) -> float | Tuple[float, Dict[str, float]]:
         vr = self.viability_filter(G, meta)
         if not vr.viable:
+            if return_metrics:
+                return vr.base_score, {
+                    "tri_count": 0,
+                    "interior_deg6": 0,
+                    "tri_no_shell_edges": 0,
+                    "nodes": int(G.number_of_nodes()),
+                    "edges": int(G.number_of_edges()),
+                    "shell_len": 0,
+                    "gate": str(vr.reason),
+                }
             return vr.base_score
 
         GG = self.prepare_graph(G)
         nV = GG.number_of_nodes()
         if nV <= 2:
+            if return_metrics:
+                return 1.0, {
+                    "tri_count": 0,
+                    "interior_deg6": 0,
+                    "tri_no_shell_edges": 0,
+                    "nodes": int(nV),
+                    "edges": int(GG.number_of_edges()),
+                    "shell_len": 0,
+                    "gate": "tiny_graph",
+                }
             return 1.0
 
-        
-
         emb = self.compute_embedding_info(GG)
-        faces_all = emb.faces  # minimal inner faces + (maybe) one outer shell
+        faces_all = emb.faces
 
-        # cyclomatic number (for the early tree check)
         m = GG.number_of_edges()
         try:
             c = nx.number_connected_components(GG)
@@ -334,18 +366,46 @@ class TriangleMeshLegacyCS(PlanarBasic):
         mu = m - nV + c
 
         # Only trees with one face get the 1.01 early return
-        # (With the new embedding, faces_all will be [] for forests; keep this gate as-is.)
         if len(faces_all) == 1 and mu == 0:
+            if return_metrics:
+                return 1.01, {
+                    "tri_count": 0,
+                    "interior_deg6": 0,
+                    "tri_no_shell_edges": 0,
+                    "nodes": int(nV),
+                    "edges": int(m),
+                    "shell_len": int(len(emb.shell)),
+                    "gate": "tree_single_face",
+                }
             return 1.01
-    
+
         # degree cap
         degs = [d for _, d in GG.degree()]
         if degs and max(degs) > 6:
+            if return_metrics:
+                return 1.03, {
+                    "tri_count": 0,
+                    "interior_deg6": 0,
+                    "tri_no_shell_edges": 0,
+                    "nodes": int(nV),
+                    "edges": int(m),
+                    "shell_len": int(len(emb.shell)),
+                    "gate": "max_degree_cap",
+                }
             return 1.03
-
 
         c_G = nx.number_connected_components(G)
         if c_G > 1:
+            if return_metrics:
+                return 1.04, {
+                    "tri_count": 0,
+                    "interior_deg6": 0,
+                    "tri_no_shell_edges": 0,
+                    "nodes": int(nV),
+                    "edges": int(m),
+                    "shell_len": int(len(emb.shell)),
+                    "gate": "disconnected",
+                }
             return 1.04
 
         # --- triangle count: count *facial* triangles only ---
@@ -368,6 +428,32 @@ class TriangleMeshLegacyCS(PlanarBasic):
         shell_count = len(emb.shell_nodes)
         if shell_count < 0 or shell_count > nV:
             shell_count = min(max(shell_count, 0), nV)
+
+
+        # count triangles none of whose edges are shell edges:
+        def _shell_edge_set(shell: List[Hash]) -> set[Tuple[Hash, Hash]]:
+            es = set()
+            if not shell:
+                return es
+            n = len(shell)
+            for i in range(n):
+                a, b = shell[i], shell[(i + 1) % n]
+                es.add((a, b) if a <= b else (b, a))
+            return es
+
+        shell_edges = _shell_edge_set(emb.shell)
+
+        def _edges_in_face(face: List[Hash]):
+            k = len(face)
+            for i in range(k):
+                u, v = face[i], face[(i+1)%k]
+                yield (u, v) if u <= v else (v, u)
+
+        tri_no_shell_edges = 0
+        for f in faces_all:
+            if len(f) == 3 and frozenset(f) in tri_faces:
+                if all(e not in shell_edges for e in _edges_in_face(f)):
+                    tri_no_shell_edges += 1
 
         # weights (configurable; defaults keep old behavior)
         tri_w     = float(self.w.tri_face_weight)
@@ -394,7 +480,10 @@ class TriangleMeshLegacyCS(PlanarBasic):
                 print("meta", meta)
                 print("gl:", gl, "score:", score)
             if gl and gl > 0:
-                score += float(self.w.genome_len_bonus_weight) / gl
+                if gl > 128:
+                    score += float(self.w.genome_len_bonus_weight) / (gl-128 + 1)
+                else:
+                    score += 0.5
 
         use_biconn_gate = bool(self.w.use_biconnected_gate)
         biconn_gate_score = float(self.w.biconnected_gate_score)
@@ -415,4 +504,14 @@ class TriangleMeshLegacyCS(PlanarBasic):
             print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)
             print("score:", float(score))
 
+        if return_metrics:
+            metrics = {
+                "tri_count": int(tri_count),
+                "interior_deg6": int(interior_deg6),
+                "tri_no_shell_edges": int(tri_no_shell_edges),
+                "nodes": int(nV),
+                "edges": int(m),
+                "shell_len": int(shell_count),
+            }
+            return float(score), metrics
         return float(score)

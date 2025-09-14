@@ -186,7 +186,7 @@ class GAExperiment:
             }
 
         run_dir = run_dir or Path.cwd()
-
+      
         summary = evolve(
             fitness=fitness,
             machine_cfg={
@@ -194,6 +194,7 @@ class GAExperiment:
                 "max_vertices": machine_cfg.max_vertices,
                 "start_state": machine_cfg.start_state,
                 "rng_seed": machine_cfg.rng_seed,
+                "transcription": getattr(machine_cfg, "transcription", "resettable"),
                 "nearest_search": {
                     "max_depth": machine_cfg.nearest_search.max_depth,
                     "tie_breaker": machine_cfg.nearest_search.tie_breaker,
