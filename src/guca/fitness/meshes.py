@@ -8,6 +8,8 @@ from collections import Counter
 import networkx as nx
 
 from .planar_basic import PlanarBasic, ViabilityResult, EmbeddingInfo
+import math
+
 
 Hash = Hashable
 
@@ -280,7 +282,7 @@ class HexMesh(_MeshBase):
 @dataclass
 class TriangleLegacyWeights:
     # tri mesh specific:
-    tri_face_weight: float = 2    # was hard-coded as 2.001
+    tri_face_weight: float = 2.001    # was hard-coded as 2.001
     interior_deg6_weight: float = 6       # was hardcoded as 1.9
 
     # compactness / shapefactor
@@ -291,10 +293,15 @@ class TriangleLegacyWeights:
 
     genome_len_bonus: bool = False
     genome_len_bonus_weight: float = 1.0
+    genome_len_bonus_threshold: int = 128
 
     use_biconnected_gate: bool = True
     biconnected_gate_score: float = 1.02
     biconnected_gate_multiplier: float = 0.001
+
+    nontri_len_min_coef: float = 1   # A
+    nontri_len_max_coef: float = 7.0  # B
+    nontri_len_max_bias: float = 7   # C (large to avoid accidental clipping)
 
 class TriangleMeshLegacyCS(PlanarBasic):
     """
@@ -424,6 +431,48 @@ class TriangleMeshLegacyCS(PlanarBasic):
         interior = emb.interior_nodes
         interior_deg6 = sum(1 for v in interior if GG.degree(v) == 6)
 
+        if tri_count > 3:
+            nontri_faces = [f for f in faces_all if len(f) > 3]
+            if len(nontri_faces) != 1:
+                # Violation: either 0 or >1 non-triangle faces
+                if return_metrics:
+                    return 10.0, {
+                        "tri_count": int(tri_count),
+                        "interior_deg6": int(interior_deg6),
+                        "tri_no_shell_edges": 0,
+                        "nodes": int(nV),
+                        "edges": int(m),
+                        "shell_len": int(len(emb.shell)),
+                        "nontri_face_count": int(len(nontri_faces)),
+                        "gate": "nontri_singleface_count",
+                    }
+                return 10.0
+
+            L = len(nontri_faces[0])
+            A = float(self.w.nontri_len_min_coef)
+            B = float(self.w.nontri_len_max_coef)
+            C = float(self.w.nontri_len_max_bias)
+            lower = A * math.sqrt(max(0, tri_count)) + 1.0
+            upper = B * math.sqrt(max(0, interior_deg6)) + C
+
+            if not (lower <= L <= upper):
+                if return_metrics:
+                    return 16.5, {
+                        "tri_count": int(tri_count),
+                        "interior_deg6": int(interior_deg6),
+                        "tri_no_shell_edges": 0,
+                        "nodes": int(nV),
+                        "edges": int(m),
+                        "shell_len": int(len(emb.shell)),
+                        "nontri_face_count": 1,
+                        "nontri_face_len": int(L),
+                        "range_lower": float(lower),
+                        "range_upper": float(upper),
+                        "gate": "nontri_singleface_length_out_of_range",
+                    }
+                return 16.5
+        
+        
         # unique boundary vertices for shell penalty
         shell_count = len(emb.shell_nodes)
         if shell_count < 0 or shell_count > nV:
@@ -480,8 +529,9 @@ class TriangleMeshLegacyCS(PlanarBasic):
                 print("meta", meta)
                 print("gl:", gl, "score:", score)
             if gl and gl > 0:
-                if gl > 128:
-                    score += float(self.w.genome_len_bonus_weight) / (gl-128 + 1)
+                T = int(self.w.genome_len_bonus_threshold)
+                if gl > T:
+                    score += float(self.w.genome_len_bonus_weight) / (gl - T + 1)
                 else:
                     score += 0.5
 
@@ -511,7 +561,9 @@ class TriangleMeshLegacyCS(PlanarBasic):
                 "tri_no_shell_edges": int(tri_no_shell_edges),
                 "nodes": int(nV),
                 "edges": int(m),
-                "shell_len": int(shell_count),
+                "shell_len": int(shell_count),             
+                "nontri_face_count": int(len([f for f in faces_all if len(f) > 3])),
+                "nontri_face_len": int(len([f for f in faces_all if len(f) > 3][0])) if any(len(f) > 3 for f in faces_all) else 0,
             }
             return float(score), metrics
-        return float(score)
+        return float(score)        

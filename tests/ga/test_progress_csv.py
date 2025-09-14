@@ -10,7 +10,7 @@ def test_progress_csv_written(tmp_path: Path):
         "nearest_search": {"max_depth": 2, "tie_breaker": "stable", "connect_all": False},
     }
     ga_cfg = {
-        "pop_size": 8, "generations": 2, "cx_pb": 0.7, "mut_pb": 0.3,
+        "pop_size": 8, "generations": 11, "cx_pb": 0.7, "mut_pb": 0.3,
         "tournament_k": 2, "elitism": 1, "init_len": 4, "min_len": 1, "max_len": 16,
         "structural": {"insert_pb": 0.2, "delete_pb": 0.1, "duplicate_pb": 0.1},
         "field": {"enum_delta_pb": 0.2},
