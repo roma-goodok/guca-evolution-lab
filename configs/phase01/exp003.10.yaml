@@ -1,0 +1,148 @@
+# configs/ga.yaml
+# Single-file Hydra config for GUCA GA experiments.
+
+# -------- Experiment meta --------
+experiment:
+  name: "exp003.10_tri_baseline"
+  description: "Baseline tri mesh search with small population"
+  inherits: "exp003.09 but states A-H -> A-D "   # optional note; not used by Hydra
+
+# -------- Derived logbook dir from environment --------
+logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
+
+# -------- Hydra run/sweep dirs --------
+hydra:
+  job:
+    name: ga_experiment
+  run:
+    dir: ${logbook_dir}/${experiment.name}/${hydra.job.name}_${now:%Y%m%d_%H%M%S}
+  sweep:
+    dir: ${logbook_dir}/${experiment.name}/${hydra.job.name}_${now:%Y%m%d_%H%M%S}
+    subdir: ${hydra.job.override_dirname}
+
+# -------- Repro & parallelism --------
+seed: 12345
+n_workers: 8          # 0=serial; >0=multiprocessing
+
+# -------- State alphabet (labels; mapped to ints by order) --------
+states: [A, B, C, D]
+
+# -------- Machine config (single-node A via omission of init_graph.nodes) --------
+machine:
+  _target_: guca.engine.config.MachineConfig
+  max_steps: 50
+  max_vertices: 100
+  start_state: A
+  rng_seed: ${seed}
+  transcription: continuable
+  nearest_search:
+    _target_: guca.engine.config.NearestSearchCfg
+    max_depth: 5
+    tie_breaker: stable
+    connect_all: true
+
+# -------- Fitness (choose ONE; comment others) --------
+
+# Triangle fitness – C# legacy aligned
+fitness:
+  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  weights:
+    _target_: guca.fitness.meshes.TriangleLegacyWeights
+    tri_face_weight: 2.001
+    interior_deg6_weight: 6.0
+    vertex_weight: -1
+    shell_vertex_weight: -1
+    genome_len_bonus: true
+    genome_len_bonus_threshold: 128
+    genome_len_bonus_weight: 1.0
+    use_biconnected_gate: true
+    biconnected_gate_score: 3.02
+    biconnected_gate_multiplier: 0.001
+    nontri_len_min_coef: 1   
+    nontri_len_max_coef: 7.0 
+    nontri_len_max_bias: 7
+
+
+# fitness:
+#   _target_: guca.fitness.meshes.TriangleMesh
+#   weights:
+#     disconnected_mul: 0.05
+#     forest_cap_min: 1.05
+#     forest_ceiling: 1.19
+#     forest_size_bonus: 0.08
+#     forest_size_ref_n: 12
+#     cycle_floor: 1.21
+#     cycle_eps: 0.001
+
+
+# -------- GA runner (toolbox+loop wired internally) --------
+ga:
+  _target_: guca.ga.experiment.GAExperiment
+  
+  selection:
+    method: roulette        # rank | tournament | roulette
+    random_ratio: 0.05   # portion of picks done uniformly at random
+
+  active:                           # legacy: active byte, p=0.10, +rotate 0.02
+    factor: 0.10
+    kind: byte
+    rotate_extra_pb: 0.20
+
+  passive:                          # legacy: passive allbytes, p=0.50, +rotate 0.10
+    factor: 0.50
+    kind: allbytes
+    rotate_extra_pb: 0.20
+
+  structuralx:
+    insert_active_pb: 0.10
+    remove_inactive_pb: 0.10
+    remove_inactive_min_len: 100
+    duplicate_head_pb: 0.20
+
+  encoding:
+    sanitize_on_decode: true   # default off (C#-style)
+    enforce_semantics: false    # only used if sanitize_on_decode: true
+    canonicalize_flags: false
+    enforce_bounds_order: true
+
+
+  # Core GA parameters
+  pop_size: 40
+  generations: 20
+  cx_pb: 0.5
+  mut_pb: 0.8
+  tournament_k: 3
+  elitism: 2
+
+  # Genome length bounds & initialization
+  init_len: 128
+  min_len: 1
+  max_len: 256
+
+  # Structural mutation rates
+  structural:
+    insert_pb: 0.35 # 0.5
+    delete_pb: 0.15
+    duplicate_pb: 0.20 # 0.10
+
+  # Field mutation regime
+  field:
+    bitflip_pb: 0.10
+    byte_pb: 0.05
+    allbytes_pb: 0.02
+    rotate_pb: 0.05
+    enum_delta_pb: 0.15
+
+  # Checkpointing
+  checkpoint:
+    save_best: true
+    save_last: true
+    save_every: 5              # 0 disables periodic
+    save_population: all      # none | best | all
+    fmt: yaml                  # json (hex genes) | yaml (rules)
+    out_dir: checkpoints       # relative to Hydra run dir
+    export_full_condition_shape: true
+    save_best_png: true
+    hist_bins: 100
+
+  progress: true
