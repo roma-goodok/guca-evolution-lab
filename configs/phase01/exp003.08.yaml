@@ -5,7 +5,7 @@
 experiment:
   name: "exp003.04_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: "exp003.05 fitness shell penalty shell_vertex_weight -1.5 -> -0.5 and vertex penalty = - 0.5 tri face = 1"   # optional note; not used by Hydra
+  inherits: "exp003.05 fitness shell penalty shell_vertex_weight -1.5 -> -0.5 and vertex penalty = - 0.5 tri face = 1  deg6 -> 6"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -48,10 +48,10 @@ fitness:
   _target_: guca.fitness.meshes.TriangleMeshLegacyCS
   weights:
     _target_: guca.fitness.meshes.TriangleLegacyWeights
-    tri_face_weight: 1
-    interior_deg6_weight: 1.0
-    vertex_weight: -0.5
-    shell_vertex_weight: -0.5
+    tri_face_weight: 2
+    interior_deg6_weight: 6.0
+    vertex_weight: -1
+    shell_vertex_weight: -1
     genome_len_bonus: true
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true

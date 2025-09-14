@@ -272,7 +272,7 @@ def evolve(
             len_top_max = len_top_min = len_top_avg = act_top_max = act_top_min = act_top_avg = 0
         pbar = tqdm(total=ngen, desc="epochs", leave=True, dynamic_ncols=True)
         pbar.set_postfix(
-            max=f"{record0['max']:.4f}", avg=f"{record0['avg']:.4f}", len=best_len0,
+            _max=f"{record0['max']:.4f}", avg=f"{record0['avg']:.4f}", len=best_len0,
             len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}", cnt_max=len(tops0),
             act_avg=f"{(sum(acts_arr)/max(1,len(acts_arr))):.2f}",
             len_top=f"{len_top_min:.0f}/{len_top_avg:.1f}/{len_top_max:.0f}",
@@ -329,6 +329,13 @@ def evolve(
             except Exception:
                 pass
 
+        # periodic checkpoint
+        if gen % 10 == 0:
+            try:
+                _append_progress(gen, pop)                
+            except Exception:
+                pass
+
         # out-of-sequence last when a new best appears
         if record["max"] > best_so_far and save_last:
             best_so_far = record["max"]
@@ -341,6 +348,9 @@ def evolve(
                 if save_best_png and G_new is not None:
                     paths["best_png"] = str(Path(d_last) / "best.png")
                 paths["last"] = str(d_last)
+
+                # append row to progress.csv for this generation
+                _append_progress(gen, pop)
             except Exception:
                 pass
 
@@ -357,7 +367,7 @@ def evolve(
             else:
                 len_top_max = len_top_min = len_top_avg = act_top_max = act_top_min = act_top_avg = 0
             pbar.set_postfix(
-                max=f"{record['max']:.4f}", avg=f"{record['avg']:.4f}",
+                _max=f"{record['max']:.4f}", avg=f"{record['avg']:.4f}",
                 len=len(hof[0]) if len(hof) else 0,
                 len_avg=f"{(sum(lens_arr)/max(1,len(lens_arr))):.2f}",
                 cnt_max=len(tops),
@@ -369,8 +379,7 @@ def evolve(
         elif progress:
             print(f"gen {gen}/{ngen}  max={record['max']:.4f}  avg={record['avg']:.4f}  len={len(hof[0]) if len(hof) else 0}")
 
-        # append row to progress.csv for this generation
-        _append_progress(gen, pop)
+        
 
     if pbar is not None:
         pbar.close()

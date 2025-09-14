@@ -280,12 +280,12 @@ class HexMesh(_MeshBase):
 @dataclass
 class TriangleLegacyWeights:
     # tri mesh specific:
-    tri_face_weight: float = 2.601         # was hard-coded as 2.001
-    interior_deg6_weight: float = 2.0        # was hardcoded as 1.9
+    tri_face_weight: float = 2    # was hard-coded as 2.001
+    interior_deg6_weight: float = 6       # was hardcoded as 1.9
 
     # compactness / shapefactor
-    vertex_weight: float = -0.5           # was hard-coded as 1.0 (per-node penalty)
-    shell_vertex_weight: float = -1.5      # penalty, legacy-UI-aligned default (helps monotonicity)
+    vertex_weight: float = -1           # was hard-coded as 1.0 (per-node penalty)
+    shell_vertex_weight: float = -1      # penalty, legacy-UI-aligned default (helps monotonicity)
     isoperimetric_quotient_weight: float = 0   
     
 
@@ -480,7 +480,10 @@ class TriangleMeshLegacyCS(PlanarBasic):
                 print("meta", meta)
                 print("gl:", gl, "score:", score)
             if gl and gl > 0:
-                score += float(self.w.genome_len_bonus_weight) / gl
+                if gl > 128:
+                    score += float(self.w.genome_len_bonus_weight) / (gl-128 + 1)
+                else:
+                    score += 0.5
 
         use_biconn_gate = bool(self.w.use_biconnected_gate)
         biconn_gate_score = float(self.w.biconnected_gate_score)
