@@ -33,3 +33,4 @@ docs/xx_legacy/*.json
 logbook/
 _logbook/
 code2prompt/
+examples/graphs

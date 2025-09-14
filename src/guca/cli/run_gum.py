@@ -17,6 +17,11 @@ from guca.core.rules import change_table_from_yaml, TranscriptionWay, CountCompa
 from guca.ga.checkpoint import _activity_scheme
 import copy
 
+import networkx as nx
+from guca.fitness.meshes import TriangleMeshLegacyCS
+from guca.fitness.planar_basic import PlanarBasic
+
+
 
 from guca.vis.png import save_png
 
@@ -314,6 +319,26 @@ def main(argv: Optional[list[str]] = None) -> int:
     mask = [bool(getattr(r, "was_active", False)) for r in m.change_table]
     activity_scheme = _activity_scheme(mask)
 
+    # Build a NetworkX view for metrics/face enumeration
+    NG = nx.Graph()
+    for n in graph.nodes():
+        NG.add_node(n.id)
+    for u, v in graph.edges():
+        NG.add_edge(int(u), int(v))
+
+    # Triangle-legacy metrics + faces/shell
+    tm = TriangleMeshLegacyCS()
+    tl_score, tl_metrics = tm.score(NG, return_metrics=True)
+
+    pb = PlanarBasic()
+    emb = pb.compute_embedding_info(NG)
+    faces_all = [list(f) for f in emb.faces]   # include shell within faces (per PlanarBasic)
+    shell_seq = list(emb.shell)
+
+    
+
+
+
     # enrich original YAML and write alongside outputs
     enriched = copy.deepcopy(cfg) if isinstance(cfg, dict) else {"machine": {}, "rules": []}
     meta = dict(enriched.get("meta") or {})
@@ -321,6 +346,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     gsum["edge_list"] = edge_list
     meta["graph_summary"] = gsum
     meta["activity_scheme"] = activity_scheme
+    meta["triangle_legacy_score"] = float(tl_score)
+    meta["triangle_legacy_metrics"] = {k: (int(v) if isinstance(v, bool) or isinstance(v, int) else v)
+                                    for k, v in tl_metrics.items()}
+    meta["faces_all"] = faces_all
+    meta["shell"] = shell_seq
     enriched["meta"] = meta
 
     genome_out = out_genome_dir / "genome_enriched.yaml"

@@ -37,6 +37,19 @@ python -m guca.cli.draw_edge_list --yaml _logbook/trimesh/baseline/exp003.05.03_
   --vis-node-render ids
 
 
+python -m guca.cli.draw_edge_list --yaml examples/graphs/shell4_triangles.yaml \
+  --run-dir examples/graphs/graph_vis \
+  --vis-node-render ids
+
+python -m guca.cli.draw_edge_list --yaml examples/graphs/strip_cross_in_rects.yaml \
+  --run-dir examples/graphs/graph_vis \
+  --vis-node-render ids
+
+  
+
+  
+
+
 
 
 
