@@ -25,9 +25,11 @@
 
 
 python -m guca.cli.run_gum \
-  --genome _logbook/trimesh/baseline/exp003.04.02_continuable_gen10K/ga_experiment_20250911_204732/checkpoints/last_00664/genome.yaml \
+  --genome _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/genome.yaml \
+  --run-dir _logbook/trimesh/baseline/exp003.05.03_shellpenalty_gen100K/ga_experiment_20250914_020852/checkpoints/last_00246/rerun_gum \
   --save-png \
-  --vis-node-render dots
+  #--vis-node-render dots
+
 
   
 

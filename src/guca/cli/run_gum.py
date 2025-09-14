@@ -219,7 +219,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--steps", type=int, default=None)
     ap.add_argument("--assert", dest="do_assert", action="store_true")
     ap.add_argument("--save-png", action="store_true", help="Save final PNG of the result (placeholder).")
-    ap.add_argument("--run-dir", default="runs", help="Base output directory (default: runs).")
+    ap.add_argument("--run-dir", default="examples/runs", help="Base output directory (default: examples/runs).")
     ap.add_argument("--log-level", default="INFO", help="Logging level (default: INFO).")
     ap.add_argument(
         "--vis-node-render",
