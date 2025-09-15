@@ -42,6 +42,218 @@ def _infer_genome_len(meta: Optional[Dict]) -> Optional[int]:
         return len(meta["genome"])
     return None
 
+# --- add in this file: a shared metrics helper for meshes ---
+
+def _common_face_and_degree_metrics(GG: nx.Graph, emb: EmbeddingInfo) -> Dict[str, int]:
+    """Common, family-agnostic metrics derived from the embedding."""
+    faces_all = emb.faces
+    shell = emb.shell or []
+
+    def _is_shell_face(face: List[Hash]) -> bool:
+        # Robust equality: same length and same node-set as shell
+        return bool(shell) and (len(face) == len(shell)) and (set(face) == set(shell))
+
+    # EXCLUDE the shell from interior faces; if there is only one face,
+    # treat it as an interior face for counting (simple cycle case).
+    faces_interior = [f for f in faces_all if not _is_shell_face(f)]
+    if not faces_interior and len(faces_all) == 1:
+        faces_interior = [faces_all[0]]
+
+    tri_count  = sum(1 for f in faces_interior if len(f) == 3)
+    quad_count = sum(1 for f in faces_interior if len(f) == 4)
+    hex_count  = sum(1 for f in faces_interior if len(f) == 6)
+
+    interior_nodes = emb.interior_nodes
+    interior_deg3 = sum(1 for v in interior_nodes if GG.degree(v) == 3)
+    interior_deg4 = sum(1 for v in interior_nodes if GG.degree(v) == 4)
+    interior_deg6 = sum(1 for v in interior_nodes if GG.degree(v) == 6)
+
+    return {
+        "nodes": GG.number_of_nodes(),
+        "edges": GG.number_of_edges(),
+        "shell_len": len(shell),
+        "faces_total": len(faces_all),
+        "faces_interior": len(faces_interior),
+        "tri_count": tri_count,
+        "quad_count": quad_count,
+        "hex_count": hex_count,
+        "interior_deg3": interior_deg3,
+        "interior_deg4": interior_deg4,
+        "interior_deg6": interior_deg6,
+    }
+
+
+
+
+
+@dataclass
+class QuadMeshWeights:
+    # primary signals
+    quad_face_weight: float = 4.001
+    interior_deg4_weight: float = 6.0
+
+    # gentle compactness/size shaping (same signs as TriangleMesh)
+    vertex_weight: float = -1.0
+    shell_vertex_weight: float = 0.0
+    isoperimetric_quotient_weight: float = 0.0
+
+    # soft penalties (NOT hard gates)
+    # penalize some non-target faces but do not forbid
+    w_forbidden_faces: Dict[int, float] = field(default_factory=lambda: {3: 4, 5: 4})
+
+    # faces longer than this allowed max get a linear penalty
+    # allowed_max_len = coef * sqrt(quad_count) + bias
+    max_face_len_coef: float = 6.0
+    max_face_len_bias: float = 4.0
+    long_face_penalty_weight: float = 0.6
+
+    # optional genome-length bonus (consistency with Triangle)
+    genome_len_bonus: bool = False
+    genome_len_bonus_weight: float = 1.0
+    genome_len_bonus_threshold: int = 128
+
+    # gates (TriangleMesh parity)
+    use_biconnected_gate: bool = True
+    biconnected_gate_score: float = 1.02
+    biconnected_gate_multiplier: float = 0.001
+
+    # degree cap (Triangle Mesh uses 6; keep same for parity)
+    max_degree_cap: int = 6
+
+
+# --- NEW: add QuadMesh scorer class ---
+
+class QuadMesh(PlanarBasic):
+    """
+    Quad-optimized scorer: rewards interior quads and interior degree≈4.
+    Non-target faces (triangles, pentagons) are penalized softly (not forbidden).
+    Faces longer than an allowed max (depending on quad_count) are softly penalized.
+    """
+    def __init__(self, *, weights: Optional[QuadMeshWeights] = None, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.w = weights or QuadMeshWeights()
+
+    def score(self, G: nx.Graph, meta: Optional[Dict] = None, *,
+              return_metrics: bool = False, verbose: bool = False, **_) -> float | Tuple[float, Dict[str, float]]:
+        vr = self.viability_filter(G, meta)
+        if not vr.viable:
+            if return_metrics:
+                return vr.base_score, {
+                    "nodes": int(G.number_of_nodes()),
+                    "edges": int(G.number_of_edges()),
+                    "shell_len": 0,
+                    "faces_total": 0,
+                    "faces_interior": 0,
+                    "tri_count": 0, "quad_count": 0, "hex_count": 0,
+                    "interior_deg3": 0, "interior_deg4": 0, "interior_deg6": 0,
+                }
+            return vr.base_score
+
+        GG = self.prepare_graph(G)
+        emb = self.compute_embedding_info(GG)
+        faces_all = emb.faces
+        shell_nodes = emb.shell_nodes
+
+        
+        # common metrics
+        cm = _common_face_and_degree_metrics(GG, emb)
+        nV = cm["nodes"]
+        quad_count = cm["quad_count"]
+        interior_deg4 = cm["interior_deg4"]
+
+        m  = cm["edges"]
+        # components of the working graph for mu; keep safe fallback
+        try:
+            c = nx.number_connected_components(GG)
+        except Exception:
+            c = 1
+        mu = m - nV + c  # 0 for forests/trees
+
+        # tiny graphs → 1.0 (same plateau)
+        if nV <= 2:
+            if return_metrics:
+                return 1.0, cm
+            return 1.0
+
+        # tree/forest plateau → 1.01
+        if mu == 0:
+            if return_metrics:
+                return 1.01 + interior_deg4 * 0.001, cm
+            return 1.01 + interior_deg4 * 0.001
+
+        # degree cap (keep parity with TriangleMesh threshold)
+        degs = [d for _, d in GG.degree()]
+        if degs and max(degs) > int(self.w.max_degree_cap):
+            if return_metrics:
+                return 1.03, cm
+            return 1.03
+
+        # disconnected penalty (strictly below cyclic band)
+        c_G = nx.number_connected_components(G)
+        if c_G > 1:
+            if return_metrics:
+                return 1.04, cm
+            return 1.04
+
+
+        # forbidden faces soft penalty (interior only)
+        faces_interior = [f for f in faces_all if f is not emb.shell]
+        len_hist = Counter(len(f) for f in faces_interior)
+        forbidden_pen = 0.0
+        for k, w in (self.w.w_forbidden_faces or {}).items():
+            forbidden_pen += float(w) * float(len_hist.get(int(k), 0))
+
+        # long-face soft penalty (use quad_count to scale the allowed max)
+        allowed_max = float(self.w.max_face_len_coef) * math.sqrt(max(0, quad_count)) + float(self.w.max_face_len_bias)
+        over = sum(max(0.0, float(len(f)) - allowed_max) for f in faces_interior if len(f) > 0)
+        longface_pen = float(self.w.long_face_penalty_weight) * over
+
+        # simple IQ-like compactness proxy (optional)
+        iq_w = float(self.w.isoperimetric_quotient_weight)
+        iq = float(quad_count + interior_deg4) / (cm["shell_len"] + 1) ** 2 if iq_w != 0 else 0.0
+
+        score = (
+            vr.base_score
+            + float(self.w.quad_face_weight) * float(quad_count)
+            + float(self.w.interior_deg4_weight) * float(interior_deg4)
+            + float(self.w.shell_vertex_weight) * float(len(shell_nodes))
+            + float(self.w.vertex_weight) * float(nV)
+            + iq_w * iq
+            - forbidden_pen
+            - longface_pen
+            + 20.0
+        )
+
+        # optional biconnected gate (compresses non-biconnected scores toward baseline)
+        if bool(self.w.use_biconnected_gate):
+            try:
+                if not nx.is_biconnected(GG):
+                    score = float(self.w.biconnected_gate_score) + score * float(self.w.biconnected_gate_multiplier)
+            except Exception:
+                pass
+
+
+        # optional genome-length bonus (same semantics as Triangle)
+        if self.w.genome_len_bonus:
+            gl = _infer_genome_len(meta)
+            if gl and gl > 0:
+                T = int(self.w.genome_len_bonus_threshold)
+                if gl > T:
+                    score += float(self.w.genome_len_bonus_weight) / (gl - T + 1)
+                else:
+                    score += 0.5
+        
+        if return_metrics:
+            # expose common metrics + penalties for analysis
+            mx = dict(cm)
+            mx.update({
+                "forbidden_penalty": float(forbidden_pen),
+                "longface_penalty": float(longface_pen),
+                "allowed_max_face_len": float(allowed_max),
+            })
+            return float(score), mx
+        return float(score)
+
 
 @dataclass
 class TriangleMeshWeights:
@@ -316,16 +528,23 @@ class TriangleMesh(PlanarBasic):
             print("shell_count:", shell_count, "nV:", nV, "m:", m, "mu:", mu)
             print("score:", float(score))
 
+        # --- EDIT: extend TriangleMesh return_metrics with common metrics (tail of function) ---
+
         if return_metrics:
+            cm = _common_face_and_degree_metrics(GG, emb)  # NEW: add general metrics
             metrics = {
+                # legacy
                 "tri_count": int(tri_count),
                 "interior_deg6": int(interior_deg6),
                 "tri_no_shell_edges": int(tri_no_shell_edges),
                 "nodes": int(nV),
                 "edges": int(m),
-                "shell_len": int(shell_count),             
+                "shell_len": int(shell_count),
                 "nontri_face_count": int(len([f for f in faces_all if len(f) > 3])),
                 "nontri_face_len": int(len([f for f in faces_all if len(f) > 3][0])) if any(len(f) > 3 for f in faces_all) else 0,
             }
+            # merge common metrics (tri/quad/hex counts, degrees, totals)
+            metrics.update(cm)
             return float(score), metrics
+
         return float(score)        

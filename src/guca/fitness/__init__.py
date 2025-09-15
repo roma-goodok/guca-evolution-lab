@@ -1,9 +1,7 @@
 from .planar_basic import PlanarBasic
-from .meshes import TriangleMesh
+from .meshes import TriangleMesh, QuadMesh
 from .by_sample import BySample, BySampleWeights
 
 __all__ = ["PlanarBasic"]
 __all__ += ["BySample", "BySampleWeights"]
-__all__ += ["TriangleMesh"]
-
-
+__all__ += ["TriangleMesh", "QuadMesh"]
