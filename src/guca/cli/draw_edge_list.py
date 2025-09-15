@@ -6,7 +6,7 @@ import argparse, json, yaml
 import networkx as nx
 from datetime import datetime
 
-from guca.fitness.meshes import TriangleMeshLegacyCS
+from guca.fitness.meshes import TriangleMesh
 from guca.fitness.planar_basic import PlanarBasic
 import copy
 
@@ -50,7 +50,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     G.add_edges_from([(int(u), int(v)) for (u, v) in el])
 
     # Triangle-legacy metrics + faces/shell on the reconstructed graph
-    tm = TriangleMeshLegacyCS()
+    tm = TriangleMesh()
     tl_score, tl_metrics = tm.score(G, return_metrics=True)
 
     pb = PlanarBasic()

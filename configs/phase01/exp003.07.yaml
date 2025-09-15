@@ -45,9 +45,9 @@ machine:
 
 # Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.TriangleLegacyWeights
+    _target_: guca.fitness.meshes.TriangleMeshWeights
     tri_face_weight: 2.601
     interior_deg6_weight: 2.0
     vertex_weight: -0.5

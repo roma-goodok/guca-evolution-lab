@@ -1,5 +1,5 @@
 import networkx as nx
-from guca.fitness.meshes import TriangleMeshLegacyCS, TriangleLegacyWeights
+from guca.fitness.meshes import TriangleMesh, TriangleMeshWeights
 
 def _tri_line_4():
     # 4 triangles as a line (same pattern used elsewhere in tests)
@@ -15,17 +15,17 @@ def _tri_line_4():
 
 def test_nontri_single_face_violation_forces_score_to_10():
     # Make the lower bound huge so the single shell length will be out of range.
-    w = TriangleLegacyWeights(
+    w = TriangleMeshWeights(
         nontri_len_min_coef=100.0,   # A -> forces lower bound very large
         nontri_len_max_coef=1.0,
         nontri_len_max_bias=0.0,
     )
-    f = TriangleMeshLegacyCS(weights=w)
+    f = TriangleMesh(weights=w)
     s = f.score(_tri_line_4())
     assert s == 16.5
 
 def test_nontri_single_face_permissive_defaults_do_not_clip():
     # With permissive defaults the score should NOT be forced to 10.0
-    f = TriangleMeshLegacyCS()  # uses permissive A/B/C defaults
+    f = TriangleMesh()  # uses permissive A/B/C defaults
     s = f.score(_tri_line_4())
     assert s != 10.0

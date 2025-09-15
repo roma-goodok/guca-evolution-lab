@@ -3,9 +3,9 @@
 
 # -------- Experiment meta --------
 experiment:
-  name: "exp003.04_tri_baseline"
-  description: "Baseline tri mesh search with small population"
-  inherits: "exp003.05 but 3x times less mutation"   # optional note; not used by Hydra
+  name: "exp003.09_tri_baseline"
+  description: "Baseline tri mesh generation search. ~20% chances to get almost regular 100-175 triangles (100 nodes) mesh"
+  inherits: "exp003.08 but with new fitness nontri_len_min clipping "   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -45,30 +45,22 @@ machine:
 
 # Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.TriangleLegacyWeights
-    tri_face_weight: 2.601
-    interior_deg6_weight: 2.0
-    vertex_weight: -0.5
-    shell_vertex_weight: -0.5
+    _target_: guca.fitness.meshes.TriangleMeshWeights
+    tri_face_weight: 2.001
+    interior_deg6_weight: 6.0
+    vertex_weight: -1
+    shell_vertex_weight: -1
     genome_len_bonus: true
+    genome_len_bonus_threshold: 128
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true
     biconnected_gate_score: 3.02
     biconnected_gate_multiplier: 0.001
-
-
-# fitness:
-#   _target_: guca.fitness.meshes.TriangleMesh
-#   weights:
-#     disconnected_mul: 0.05
-#     forest_cap_min: 1.05
-#     forest_ceiling: 1.19
-#     forest_size_bonus: 0.08
-#     forest_size_ref_n: 12
-#     cycle_floor: 1.21
-#     cycle_eps: 0.001
+    nontri_len_min_coef: 1   
+    nontri_len_max_coef: 7.0 
+    nontri_len_max_bias: 7
 
 
 # -------- GA runner (toolbox+loop wired internally) --------
@@ -80,20 +72,20 @@ ga:
     random_ratio: 0.05   # portion of picks done uniformly at random
 
   active:                           # legacy: active byte, p=0.10, +rotate 0.02
-    factor: 0.03
+    factor: 0.10
     kind: byte
-    rotate_extra_pb: 0.07
+    rotate_extra_pb: 0.20
 
   passive:                          # legacy: passive allbytes, p=0.50, +rotate 0.10
-    factor: 0.10
+    factor: 0.50
     kind: allbytes
-    rotate_extra_pb: 0.07
+    rotate_extra_pb: 0.20
 
   structuralx:
-    insert_active_pb: 0.03
-    remove_inactive_pb: 0.03
+    insert_active_pb: 0.10
+    remove_inactive_pb: 0.10
     remove_inactive_min_len: 100
-    duplicate_head_pb: 0.07
+    duplicate_head_pb: 0.20
 
   encoding:
     sanitize_on_decode: true   # default off (C#-style)
@@ -106,7 +98,7 @@ ga:
   pop_size: 40
   generations: 20
   cx_pb: 0.5
-  mut_pb: 0.2
+  mut_pb: 0.8
   tournament_k: 3
   elitism: 2
 
@@ -117,17 +109,17 @@ ga:
 
   # Structural mutation rates
   structural:
-    insert_pb: 0.1 # 0.5
-    delete_pb: 0.1
-    duplicate_pb: 0.05 # 0.10
+    insert_pb: 0.35 # 0.5
+    delete_pb: 0.15
+    duplicate_pb: 0.20 # 0.10
 
   # Field mutation regime
   field:
-    bitflip_pb: 0.03
-    byte_pb: 0.02
-    allbytes_pb: 0.005
-    rotate_pb: 0.01
-    enum_delta_pb: 0.05
+    bitflip_pb: 0.10
+    byte_pb: 0.05
+    allbytes_pb: 0.02
+    rotate_pb: 0.05
+    enum_delta_pb: 0.15
 
   # Checkpointing
   checkpoint:

@@ -18,7 +18,7 @@ from guca.ga.checkpoint import _activity_scheme
 import copy
 
 import networkx as nx
-from guca.fitness.meshes import TriangleMeshLegacyCS
+from guca.fitness.meshes import TriangleMesh
 from guca.fitness.planar_basic import PlanarBasic
 
 
@@ -327,7 +327,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         NG.add_edge(int(u), int(v))
 
     # Triangle-legacy metrics + faces/shell
-    tm = TriangleMeshLegacyCS()
+    tm = TriangleMesh()
     tl_score, tl_metrics = tm.score(NG, return_metrics=True)
 
     pb = PlanarBasic()

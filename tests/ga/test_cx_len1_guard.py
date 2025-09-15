@@ -1,11 +1,11 @@
 import random
 from pathlib import Path
 from guca.ga.toolbox import evolve
-from guca.fitness.meshes import TriangleMesh, MeshWeights
+from guca.fitness.meshes import TriangleMesh, TriangleMeshWeights
 
 def test_cx_handles_len1_parents(tmp_path: Path):
     # Fitness and machine are trivial; we just want to exercise GA crossover.
-    fitness = TriangleMesh(weights=MeshWeights())
+    fitness = TriangleMesh(weights=TriangleMeshWeights())
     machine_cfg = {
         "max_steps": 3,
         "max_vertices": 50,
