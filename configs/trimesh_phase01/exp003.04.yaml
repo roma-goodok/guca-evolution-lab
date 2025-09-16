@@ -5,7 +5,7 @@
 experiment:
   name: "exp003.04_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: "exp003.04 fitness shell penalty shell_vertex_weight -0.5 -> -1.5"   # optional note; not used by Hydra
+  inherits: "exp003.03 but transcription continuable"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -45,9 +45,9 @@ machine:
 
 # Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.TriangleLegacyWeights
+    _target_: guca.fitness.meshes.TriangleMeshWeights
     tri_face_weight: 2.601
     interior_deg6_weight: 2.0
     vertex_weight: -0.5

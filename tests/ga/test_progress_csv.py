@@ -1,10 +1,10 @@
 from pathlib import Path
 import csv
 from guca.ga.toolbox import evolve
-from guca.fitness.meshes import TriangleMesh, MeshWeights
+from guca.fitness.meshes import TriangleMesh, TriangleMeshWeights
 
 def test_progress_csv_written(tmp_path: Path):
-    fitness = TriangleMesh(weights=MeshWeights())
+    fitness = TriangleMesh(weights=TriangleMeshWeights())
     machine_cfg = {
         "max_steps": 3, "max_vertices": 200, "start_state": "A",
         "nearest_search": {"max_depth": 2, "tie_breaker": "stable", "connect_all": False},

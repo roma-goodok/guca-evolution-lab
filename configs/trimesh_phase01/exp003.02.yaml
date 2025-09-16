@@ -3,9 +3,9 @@
 
 # -------- Experiment meta --------
 experiment:
-  name: "exp003.03_tri_baseline"
+  name: "exp003.02_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: "exp003.02 but genome_len_bonus = true"   # optional note; not used by Hydra
+  inherits: "exp003.01 but cx_pb 0.8->0.5"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -44,14 +44,14 @@ machine:
 
 # Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.TriangleLegacyWeights
+    _target_: guca.fitness.meshes.TriangleMeshWeights
     tri_face_weight: 2.601
     interior_deg6_weight: 2.0
     vertex_weight: -0.5
     shell_vertex_weight: -0.5
-    genome_len_bonus: true
+    genome_len_bonus: false
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true
     biconnected_gate_score: 3.02

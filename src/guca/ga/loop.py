@@ -201,11 +201,27 @@ def evolve(
             len_top_max = len_top_min = len_top_avg = act_top_max = act_top_min = act_top_avg = 0
 
         metrics_json = "{}"
+        best_metrics = {}
         if hasattr(best, "metrics") and isinstance(best.metrics, dict):
+            # keep JSON for compatibility
             try:
                 metrics_json = json.dumps(best.metrics, ensure_ascii=False)
             except Exception:
                 metrics_json = "{}"
+            # numeric-only view for columns
+            for k, v in best.metrics.items():
+                if isinstance(v, (int, float)) and v == v and abs(v) != float("inf"):
+                    best_metrics[k] = float(v)
+
+        # choose stable set of metric keys to emit as columns
+        KNOWN_KEYS = [
+            "tri_count", "quad_count", "hex_count",
+            "interior_deg3", "interior_deg4", "interior_deg6",
+            "nodes", "edges", "shell_len", "faces_total", "faces_interior",
+            "tri_no_shell_edges",  # present for TriangleMesh
+            "forbidden_penalty", "longface_penalty", "allowed_max_face_len",  # QuadMesh extras
+        ]
+        metric_cols = {f"m_{k}": float(best_metrics.get(k, 0.0)) for k in KNOWN_KEYS}
 
         row = {
             "datetime": datetime.now().isoformat(timespec="seconds"),
@@ -221,12 +237,15 @@ def evolve(
             "best_activity_scheme": best_scheme,
             "best_metrics_json": metrics_json,
         }
+        row.update(metric_cols)
+
         write_header = not progress_csv.exists()
         with open(progress_csv, "a", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, fieldnames=list(row.keys()))
             if write_header:
                 w.writeheader()
             w.writerow(row)
+
 
     # initial last_00000
     last_dir_path = None

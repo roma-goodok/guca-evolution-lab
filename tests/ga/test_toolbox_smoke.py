@@ -1,11 +1,10 @@
 # tests/ga/test_toolbox_smoke.py
 from pathlib import Path
 from guca.ga.toolbox import evolve
-from guca.fitness.meshes import QuadMesh
-from guca.fitness.meshes import MeshWeights
+from guca.fitness.meshes import TriangleMesh
 
 def test_evolve_runs_and_writes_checkpoints(tmp_path: Path):
-    fitness = QuadMesh(weights=MeshWeights())
+    fitness = TriangleMesh()
     machine_cfg = {"max_steps": 60, "max_vertices": 2000, "start_state": "A",
                    "nearest_search": {"max_depth": 2, "tie_breaker": "stable", "connect_all": False}}
     ga_cfg = {"pop_size": 10, "generations": 3, "cx_pb": 0.7, "mut_pb": 0.3,

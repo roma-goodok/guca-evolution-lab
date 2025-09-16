@@ -1,10 +1,10 @@
 # tests/ga/test_checkpoint_bundle.py
 from pathlib import Path
 from guca.ga.toolbox import evolve
-from guca.fitness.meshes import TriangleMesh, MeshWeights
+from guca.fitness.meshes import TriangleMeshWeights, TriangleMesh
 
 def test_checkpoint_bundle_contains_artifacts(tmp_path: Path):
-    fitness = TriangleMesh(weights=MeshWeights())
+    fitness = TriangleMesh(weights=TriangleMeshWeights())
     machine_cfg = {
         "max_steps": 5,
         "max_vertices": 200,

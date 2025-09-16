@@ -5,7 +5,7 @@
 experiment:
   name: "exp003.04_tri_baseline"
   description: "Baseline tri mesh search with small population"
-  inherits: "exp003.08 but with new fitness nontri_len_min clipping "   # optional note; not used by Hydra
+  inherits: "exp003.05 fitness shell penalty shell_vertex_weight -1.5 -> -0.5 and vertex penalty = - 0.5 tri face = 1  deg6 -> 6"   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/trimesh/baseline
@@ -45,22 +45,18 @@ machine:
 
 # Triangle fitness – C# legacy aligned
 fitness:
-  _target_: guca.fitness.meshes.TriangleMeshLegacyCS
+  _target_: guca.fitness.meshes.TriangleMesh
   weights:
-    _target_: guca.fitness.meshes.TriangleLegacyWeights
-    tri_face_weight: 2.001
+    _target_: guca.fitness.meshes.TriangleMeshWeights
+    tri_face_weight: 2
     interior_deg6_weight: 6.0
     vertex_weight: -1
     shell_vertex_weight: -1
     genome_len_bonus: true
-    genome_len_bonus_threshold: 128
     genome_len_bonus_weight: 1.0
     use_biconnected_gate: true
     biconnected_gate_score: 3.02
     biconnected_gate_multiplier: 0.001
-    nontri_len_min_coef: 1   
-    nontri_len_max_coef: 7.0 
-    nontri_len_max_bias: 7
 
 
 # fitness:

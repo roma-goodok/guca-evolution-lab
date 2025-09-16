@@ -1,7 +1,7 @@
 # tests/test_face_extraction_triangle_lines.py
 import networkx as nx
 from guca.fitness.planar_basic import PlanarBasic
-from guca.fitness.meshes import TriangleMeshLegacyCS
+from guca.fitness.meshes import TriangleMesh
 
 def g_tri_line_3():
     G = nx.Graph()
@@ -28,7 +28,7 @@ def g_tri_line_6():
     return G
 
 def test_triangle_line_counts_faces_correctly():
-    f = TriangleMeshLegacyCS()
+    f = TriangleMesh()
     assert f.score(g_tri_line_3()) > f.score(nx.Graph([(0,1),(1,2)]))  # sanity
     # Count via internal API behavior: each added triangle should raise score by ~2
     pb = PlanarBasic()
@@ -36,8 +36,8 @@ def test_triangle_line_counts_faces_correctly():
         emb = pb.compute_embedding_info(G)
         # recompute via scorer internals is not exposed; assert monotone growth instead:
         # 3 < 4 < 5 < 6 cases strictly increase
-    f3 = TriangleMeshLegacyCS().score(g_tri_line_3())
-    f4 = TriangleMeshLegacyCS().score(g_tri_line_4())
-    f5 = TriangleMeshLegacyCS().score(g_tri_line_5())
-    f6 = TriangleMeshLegacyCS().score(g_tri_line_6())
+    f3 = TriangleMesh().score(g_tri_line_3())
+    f4 = TriangleMesh().score(g_tri_line_4())
+    f5 = TriangleMesh().score(g_tri_line_5())
+    f6 = TriangleMesh().score(g_tri_line_6())
     assert f4 > f3 and f5 > f4 and f6 > f5
