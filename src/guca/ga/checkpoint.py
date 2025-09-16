@@ -134,6 +134,28 @@ def _write_metrics_csv(dir_: Path, metrics: Dict[str, Any]):
         w = csv.writer(fh); w.writerow(cols); w.writerow([metrics[k] for k in cols])
     return str(p)
 
+def _write_metrics_txt(dir_: Path, metrics: Dict[str, Any]):
+    """
+    Write metrics as a simple key:value list, one per line, aligned.
+    Useful for quick human inspection alongside metrics.csv.
+    """
+    p = dir_ / "metrics.txt"
+    try:
+        width = max((len(str(k)) for k in metrics.keys()), default=0)
+        with open(p, "w", encoding="utf-8") as fh:
+            for k, v in metrics.items():
+                fh.write(f"{str(k).ljust(width)} : {v}\n")
+        return str(p)
+    except Exception:
+        # best-effort fall-back: still try to create an empty file to signal intent
+        try:
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write("")
+            return str(p)
+        except Exception:
+            return None
+
+
 def _render_png_dots(dir_: Path, G: nx.Graph, out_name: str = "best.png") -> Optional[str]:
     try:
         from guca.vis.png import save_png
@@ -226,6 +248,7 @@ def _bundle_checkpoint(dir_: Path, *, pop, fits, states, machine_cfg, fitness, b
             stats[k] = v
 
     _write_metrics_csv(dir_, stats)
+    _write_metrics_txt(dir_, stats)
     return {"genome": genome_path, "metrics": stats}
 
 def _write_checkpoint_epoch(ckpt_dir: Path, gen: int, pop: List[List[int]], fits: List[float]) -> str:

@@ -195,6 +195,8 @@ class QuadMesh(PlanarBasic):
                 return 1.04, cm
             return 1.04
 
+        
+
 
         # forbidden faces soft penalty (interior only)
         faces_interior = [f for f in faces_all if f is not emb.shell]
@@ -207,6 +209,15 @@ class QuadMesh(PlanarBasic):
         allowed_max = float(self.w.max_face_len_coef) * math.sqrt(max(0, quad_count)) + float(self.w.max_face_len_bias)
         over = sum(max(0.0, float(len(f)) - allowed_max) for f in faces_interior if len(f) > 0)
         longface_pen = float(self.w.long_face_penalty_weight) * over
+
+        
+        lower = 4*math.sqrt(max(0, quad_count)) - 1
+        L = int(len(emb.shell))
+        if not (lower <= L):
+            if return_metrics:
+                mx = dict(cm)
+                return 3.5, mx
+            return 3.5
 
         # simple IQ-like compactness proxy (optional)
         iq_w = float(self.w.isoperimetric_quotient_weight)
@@ -231,6 +242,8 @@ class QuadMesh(PlanarBasic):
                     score = float(self.w.biconnected_gate_score) + score * float(self.w.biconnected_gate_multiplier)
             except Exception:
                 pass
+
+        
 
 
         # optional genome-length bonus (same semantics as Triangle)

@@ -54,9 +54,9 @@ fitness:
     shell_vertex_weight: 0.0
     isoperimetric_quotient_weight: 0.0
     w_forbidden_faces:
-      3: 6
+      3: 8
       5: 4
-    max_face_len_coef: 4.0
+    max_face_len_coef: 4.5
     max_face_len_bias: 1.0
     long_face_penalty_weight: 0.6
     genome_len_bonus: true
