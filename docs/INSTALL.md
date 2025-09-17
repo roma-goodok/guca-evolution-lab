@@ -67,3 +67,36 @@ python -m guca.cli.run_gum --genome examples/genomes/dummy_bell.yaml
     python -c "import sys; print(sys.executable)"
     ```
   - Use the same interpreter for install and run.
+
+
+## Jupyter on a headless server (Ubuntu) + SSH tunnel
+
+> Assumes you already installed runtime deps (`requirements.txt`).
+> For notebooks, install dev tools in your virtualenv/conda env:
+
+```bash
+# (on server)
+python -m pip install -r requirements-dev.txt
+python -m ipykernel install --user --name guca-lab --display-name "Python (guca-lab)"
+```
+
+Run Jupyter without opening a browser, bound to localhost:
+
+```bash
+# (on server, in the repo root)
+jupyter lab --no-browser --port 8888
+# or:
+jupyter notebook --no-browser --port 8888
+```
+Create an SSH tunnel from your local machine:
+
+# (on your laptop)
+ssh -N -L 8888:127.0.0.1:8888 roma@<server_ip>
+
+
+Open the printed URL in your local browser (it will look like http://127.0.0.1:8888/lab?token=...).
+
+If you prefer a fixed token/password:
+
+jupyter lab --no-browser --port 8888 --ServerApp.token='' --ServerApp.password=''
+# (empty token; for trusted environments only)

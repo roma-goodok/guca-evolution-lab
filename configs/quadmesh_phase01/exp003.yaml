@@ -3,9 +3,9 @@
 
 # -------- Experiment meta --------
 experiment:
-  name: "exp002_quad_baseline"
-  description: "Baseline quad mesh. Produce a tubes usually"
-  inherits: "exp001"   # optional note; not used by Hydra
+  name: "exp003_quad_baseline"
+  description: "Baseline quad mesh generation search."
+  inherits: "exp002 but new fitness metric wh_mean and wh_mean_weight = 100 "   # optional note; not used by Hydra
 
 # -------- Derived logbook dir from environment --------
 logbook_dir: ${oc.env:ML_LOGBOOK_DIR,logbook}/quadmesh/baseline
@@ -62,6 +62,7 @@ fitness:
     genome_len_bonus: true
     genome_len_bonus_weight: 1.0
     genome_len_bonus_threshold: 128
+    wh_mean_weight: 100
 
 
 # -------- GA runner (toolbox+loop wired internally) --------

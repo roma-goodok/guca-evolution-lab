@@ -112,6 +112,8 @@ class QuadMeshWeights:
     genome_len_bonus_weight: float = 1.0
     genome_len_bonus_threshold: int = 128
 
+    wh_mean_weight: float = 100
+
     # gates (TriangleMesh parity)
     use_biconnected_gate: bool = True
     biconnected_gate_score: float = 1.02
@@ -197,6 +199,19 @@ class QuadMesh(PlanarBasic):
 
         
 
+        # --- STRICT shell lower-bound gate (requested) ----------------------
+        # require: shell_len >= 4 * sqrt(#quad_faces); otherwise force 8.0
+        if quad_count > 0:            
+            required_shell = 4.0 * math.sqrt(float(quad_count))
+            if cm["shell_len"] < required_shell:
+                if return_metrics:
+                    mx = dict(cm)
+                    mx["wh_mean"] = 0.0
+                    mx["gate"] = "shell_lower_bound"
+                    mx["required_shell_min"] = float(required_shell)
+                    return 3.5, mx
+                return 3.5
+
 
         # forbidden faces soft penalty (interior only)
         faces_interior = [f for f in faces_all if f is not emb.shell]
@@ -211,13 +226,8 @@ class QuadMesh(PlanarBasic):
         longface_pen = float(self.w.long_face_penalty_weight) * over
 
         
-        lower = 4*math.sqrt(max(0, quad_count)) - 1
-        L = int(len(emb.shell))
-        if not (lower <= L):
-            if return_metrics:
-                mx = dict(cm)
-                return 3.5, mx
-            return 3.5
+        # --- mean WH over quad faces -----------------------------------
+        wh_mean = self._mean_wh_quads(GG, emb)
 
         # simple IQ-like compactness proxy (optional)
         iq_w = float(self.w.isoperimetric_quotient_weight)
@@ -232,6 +242,7 @@ class QuadMesh(PlanarBasic):
             + iq_w * iq
             - forbidden_pen
             - longface_pen
+            + float(self.w.wh_mean_weight) * float(wh_mean)  
             + 20.0
         )
 
@@ -263,9 +274,103 @@ class QuadMesh(PlanarBasic):
                 "forbidden_penalty": float(forbidden_pen),
                 "longface_penalty": float(longface_pen),
                 "allowed_max_face_len": float(allowed_max),
+                "wh_mean": float(wh_mean),
             })
             return float(score), mx
         return float(score)
+
+    def _mean_wh_quads(self, G: nx.Graph, emb: EmbeddingInfo) -> float:
+        """
+        Mean oriented dual run-length product
+        Oriented dual-graph geodesic extents (two principal, opposite-edge directions)
+
+        For each interior quad face f = [v0,v1,v2,v3], define edges e_i=(v_i,v_{i+1})
+        and walk on the dual along two axes:
+          - axis A: enter via edge index 0 (and back via 2), always exit opposite
+          - axis B: enter via 1 (and back via 3)
+        Count steps in both directions without revisiting faces; stop on shell edges
+        (edge used by exactly one face) or when the neighbor is not a quad.
+        WH(f) = width(f) * height(f); return mean over interior quads.
+        """
+        faces = emb.faces
+        if not faces:
+            return 0.0
+
+        # Build per-face edge lists and a map edge->faces
+        def _edges_of(face):
+            k = len(face)
+            return [ (face[i], face[(i+1)%k]) if face[i] <= face[(i+1)%k] else (face[(i+1)%k], face[i])
+                     for i in range(k) ]
+
+        all_edges_to_faces: dict[tuple, list[int]] = {}
+        face_edges: list[list[tuple]] = []
+        for idx, f in enumerate(faces):
+            es = _edges_of(f)
+            face_edges.append(es)
+            for e in es:
+                all_edges_to_faces.setdefault(e, []).append(idx)
+
+        # Shell edges: appear only once among minimal faces
+        shell_edges = {e for e, owners in all_edges_to_faces.items() if len(owners) == 1}
+
+        # Select interior quad faces (exclude the outer shell face by identity)
+        quads: list[int] = [i for i,f in enumerate(faces) if len(f) == 4 and f is not emb.shell]
+        if not quads:
+            return 0.0
+
+        # Fast local: neighbor face via this face's edge index i, or None
+        def _neighbor(face_idx: int, edge_idx: int) -> tuple[int|None, int|None]:
+            e = face_edges[face_idx][edge_idx]
+            if e in shell_edges:
+                return None, None
+            owners = all_edges_to_faces.get(e, [])
+            if len(owners) != 2:
+                return None, None
+            nb = owners[0] if owners[1] == face_idx else owners[1]
+            # find index of shared edge inside neighbor
+            try:
+                nb_i = face_edges[nb].index(e)
+            except ValueError:
+                nb_i = None
+            return nb, nb_i
+
+        def _axis_extent(fid: int, enter_idx_a: int, enter_idx_b: int) -> tuple[int,int]:
+            """Return (width, height) for face fid. Count the starting face, too."""
+            def _walk_bidir(start_enter_idx: int) -> int:
+                visited = {fid}
+                steps = 0
+                # forward
+                cur, ent = fid, start_enter_idx
+                while True:
+                    exit_idx = (ent + 2) % 4
+                    nb, nb_ent = _neighbor(cur, exit_idx)
+                    if nb is None or nb_ent is None: break
+                    if len(faces[nb]) != 4: break
+                    if nb in visited: break
+                    visited.add(nb); steps += 1
+                    cur, ent = nb, nb_ent
+                # backward
+                cur, ent = fid, (start_enter_idx + 2) % 4
+                while True:
+                    exit_idx = (ent + 2) % 4
+                    nb, nb_ent = _neighbor(cur, exit_idx)
+                    if nb is None or nb_ent is None: break
+                    if len(faces[nb]) != 4: break
+                    if nb in visited: break
+                    visited.add(nb); steps += 1
+                    cur, ent = nb, nb_ent
+                # IMPORTANT: include the starting face itself
+                return 1 + steps
+
+            width  = _walk_bidir(0)  # axis 0↔2
+            height = _walk_bidir(1)  # axis 1↔3
+            return width, height
+
+        total = 0.0
+        for fid in quads:
+            w,h = _axis_extent(fid, 0, 1)
+            total += float(w * h)
+        return total / max(1, len(quads))
 
 
 @dataclass
