@@ -222,7 +222,7 @@ class QuadMesh(PlanarBasic):
 
         # long-face soft penalty (use quad_count to scale the allowed max)
         allowed_max = float(self.w.max_face_len_coef) * math.sqrt(max(0, quad_count)) + float(self.w.max_face_len_bias)
-        over = sum(max(0.0, float(len(f)) - allowed_max) for f in faces_interior if len(f) > 0)
+        over = sum(max(0.0, float(len(f)) - allowed_max) for f in faces_all if len(f) > 0)
         longface_pen = float(self.w.long_face_penalty_weight) * over
 
         
